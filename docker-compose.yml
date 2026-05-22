@@ -1,0 +1,32 @@
+services:
+  gowa:
+    image: aldinokemal2104/go-whatsapp-web-multidevice:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - gowa-storage:/app/storages
+    environment:
+      WHATSAPP_WEBHOOK: http://marawa-bot:8000/webhook/gowa
+      WHATSAPP_WEBHOOK_EVENTS: message
+      WHATSAPP_WEBHOOK_SECRET: ${GOWA_WEBHOOK_SECRET:-change-this-secret}
+      WHATSAPP_BASIC_AUTH: ${GOWA_BASIC_AUTH_USER:-marawa}:${GOWA_BASIC_AUTH_PASS:-change-me}
+      WHATSAPP_PORT: "3000"
+    depends_on:
+      - marawa-bot
+
+  marawa-bot:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./app/secret:/app/secrets:ro
+      - marawa-data:/app/data
+    ports:
+      - "8000:8000"
+
+volumes:
+  gowa-storage:
+  marawa-data:
