@@ -211,7 +211,7 @@ def format_data_options(
 
     visible_choices: list[dict] = []
     result_lines: list[str] = []
-    result_lines.append(f"Saya menemukan beberapa hasil yang cocok {ICON_CHECK}")
+    result_lines.append(f"🔍 Saya temukan beberapa data yang mungkin cocok:")
     result_lines.append("")
 
     choice_number = 1
@@ -242,12 +242,12 @@ def format_data_options(
 
     # Guidance
     guidance_lines: list[str] = []
-    guidance_lines.append("Ketik *nomor* untuk memilih.")
+    guidance_lines.append("👉 Ketik *nomor* untuk memilih.")
     if has_next:
-        guidance_lines.append("Ketik *lainnya* untuk pilihan berikutnya.")
+        guidance_lines.append("👉 Ketik *lainnya* untuk hasil berikutnya.")
     guidance_lines.append("")
-    guidance_lines.append("_Ketik batal untuk kembali._")
-    guidance_lines.append("_Ketik menu untuk ke menu utama._")
+    guidance_lines.append("Atau tulis kata kunci baru yang lebih spesifik.")
+    guidance_lines.append("🔙 _batal_ = kembali | _menu_ = menu utama")
 
     return (
         "\n".join(result_lines).strip(),
