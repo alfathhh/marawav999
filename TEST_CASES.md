@@ -447,6 +447,29 @@ Maaf, admin sedang sibuk saat ini. Silakan coba lagi nanti.
 4. Mengakhiri percakapan
 ```
 
+## TC-14b Timeout Handoff Admin Proaktif (30 menit)
+
+Prasyarat:
+- User masuk mode admin.
+- Admin tidak membalas sampai lebih dari 30 menit.
+- User juga tidak mengirim pesan.
+
+Ekspektasi bot (dikirim proaktif tanpa input user):
+
+```text
+Maaf, admin belum bisa merespons saat ini.
+
+Bot Marawa sudah aktif kembali. Silakan coba lagi nanti atau pilih layanan lain.
+
+Saya kembalikan ke menu utama.
+
+1. Mencari data statistik BPS Kabupaten Padang Pariaman
+...
+```
+
+Catatan:
+- Bot proaktif mengirim ini via background task, bukan menunggu user chat duluan.
+
 ## TC-15 Timeout Session Umum
 
 Set `SESSION_TIMEOUT_SECONDS=600`.
@@ -512,13 +535,33 @@ Kirim pesan normal dari user.
 Ekspektasi:
 - Bot tidak membalas pesan dirinya sendiri.
 - Bot tidak mengirim jawaban yang sama dua kali untuk webhook duplicate.
+- Bot tidak memproses pesan lama yang di-replay GOWA saat server restart.
 
 Log yang dicek:
 
 ```text
 duplicate
 bot_echo
+stale_message
+bot_own_number
 ```
+
+## TC-18b Server Restart Tidak Mengirim Pesan
+
+Prasyarat:
+- Ada pesan user yang belum terproses (misal user kirim pesan saat server mati).
+
+Langkah:
+1. Restart server: `docker compose restart marawa-bot`
+2. Tunggu 30 detik.
+
+Ekspektasi:
+- Bot TIDAK mengirim pesan apa pun ke user setelah restart.
+- Pesan lama yang di-replay GOWA diabaikan karena timestamp sudah lewat 2 menit.
+- Log menunjukkan `webhook.gowa.ignore_stale_message`.
+
+Catatan:
+- Pastikan `BOT_PHONE_NUMBER` sudah diset di `.env`.
 
 ## TC-19 Prompt Injection/Jailbreak
 
@@ -565,7 +608,10 @@ Saya bisa membantu mencari data, memberi arahan konsultasi statistik, atau mengh
 - [ ] User tidak dibalas selama handoff aktif.
 - [ ] Admin command tanpa nomor tidak memicu intro.
 - [ ] Admin selesai mengabari user dan membuka sesi/menu lagi.
+- [ ] Admin handoff timeout proaktif (30 menit) mengaktifkan bot kembali.
 - [ ] Timeout session memberi notice bubble terpisah.
 - [ ] Google Sheets tidak memblokir balasan.
 - [ ] Duplicate webhook tidak membuat bot kirim dua kali.
+- [ ] Stale message (> 2 menit) diabaikan saat server restart.
+- [ ] Bot tidak kirim pesan ke diri sendiri (BOT_PHONE_NUMBER filter).
 - [ ] Prompt injection ditolak.

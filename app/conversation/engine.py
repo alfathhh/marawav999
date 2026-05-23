@@ -40,15 +40,6 @@ class ConversationEngine:
                 )
             return self._with_timeout_notice(session, BotResponse(self.main_menu(), Intent.MENU, metadata={"greeting": True}), user_message.phone)
         response = await self._handle_message(session, user_message, text, lowered)
-        if (
-            self._is_greeting(lowered)
-            and user_message.phone not in self.admin_handoff.admin_numbers
-            and response.intent == Intent.AMBIGUOUS
-        ):
-            session.state = SessionState.MAIN_MENU
-            session.handoff_started_at = None
-            self._clear_data_context(session)
-            response = BotResponse(self.main_menu(), Intent.MENU, metadata={"greeting": True, "ambiguous_greeting_recovered": True})
         response = self._with_session_intro(session, response, user_message.phone)
         return self._with_timeout_notice(session, response, user_message.phone)
 
@@ -75,12 +66,6 @@ class ConversationEngine:
             self._clear_data_context(session)
             session.needs_intro = False
             return BotResponse(self.intro_message(), Intent.MENU, metadata={"session_intro": True, "new_session_greeting": True})
-
-        if self._is_greeting(lowered) and not sender_is_admin:
-            session.state = SessionState.MAIN_MENU
-            session.handoff_started_at = None
-            self._clear_data_context(session)
-            return BotResponse(self.main_menu(), Intent.MENU, metadata={"greeting": True})
 
         if lowered in {"menu", "batal", "batalkan"}:
             session.state = SessionState.MAIN_MENU
@@ -338,6 +323,8 @@ class ConversationEngine:
             decision = await self.agent.plan(session, text)
             guarded_response = self._guarded_agent_response(decision)
             if guarded_response:
+                # Add navigation hint so user knows how to escape this state
+                guarded_response.message += f"\n\n{self._submenu_navigation_text()}"
                 return guarded_response
             return await self._show_data_options(
                 session,
@@ -418,6 +405,7 @@ class ConversationEngine:
                 f"{self._submenu_navigation_text()}"
             )
         if not session.selected_bps_variable:
+            self._clear_data_context(session)
             session.state = SessionState.ASKING_DATA_QUERY
             return self._data_response(self._with_submenu_navigation("Boleh. Data apa yang ingin dicari?"))
         result = await self.bps_client.fetch_table_by_variable(
@@ -534,9 +522,15 @@ class ConversationEngine:
         if not session.last_data_context:
             return False
         normalized = text.lower()
-        has_year = bool(parse_years(text))
+        # Only treat as followup if text explicitly references missing/absent data
         followup_words = {"mana", "kok", "loh", "kenapa", "tidak ada", "ga ada", "gak ada", "belum ada"}
-        return has_year or any(word in normalized for word in followup_words)
+        has_followup_word = any(word in normalized for word in followup_words)
+        if not has_followup_word:
+            return False
+        # Additionally check if years are mentioned together with followup words
+        has_year = bool(parse_years(text))
+        missing_years = session.last_data_context.get("missing_years") or []
+        return has_followup_word and (has_year or bool(missing_years))
 
     def _answer_last_data_followup(self, text: str, session: Session) -> str:
         context = session.last_data_context

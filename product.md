@@ -120,8 +120,9 @@ Jika pengguna meminta konsultasi/rekomendasi statistik:
 3. Bot mengirim notifikasi ke seluruh nomor admin.
 4. Bot berhenti membalas pengguna selama handoff aktif.
 5. Pengguna tetap bisa membatalkan dengan `batal`, `batalkan`, `menu`, atau `keluar`.
-6. Jika admin tidak mengambil alih sampai timeout, bot mengembalikan pengguna ke menu.
-7. Admin dapat mengaktifkan bot kembali dengan command `selesai <nomor_user>`.
+6. Jika admin tidak mengambil alih sampai `ADMIN_PICKUP_TIMEOUT_SECONDS`, bot mengembalikan pengguna ke menu saat user mengirim pesan berikutnya.
+7. Jika admin tidak merespons dalam 30 menit (hardcoded), bot proaktif mengirim pemberitahuan ke user dan mengaktifkan diri kembali tanpa menunggu pesan user.
+8. Admin dapat mengaktifkan bot kembali dengan command `selesai <nomor_user>`.
 
 ## 8. Arsitektur
 
@@ -259,6 +260,7 @@ GOWA_BASIC_AUTH_PASS=
 GOWA_WEBHOOK_SECRET=
 
 ADMIN_NUMBERS=628xxxx,628yyyy
+BOT_PHONE_NUMBER=628zzzzzzz
 GOOGLE_SHEETS_SPREADSHEET_ID=
 GOOGLE_SERVICE_ACCOUNT_JSON=
 
@@ -277,8 +279,11 @@ Webhook:
 
 - Hanya event `message` yang diproses.
 - Pesan outgoing/fromMe diabaikan.
-- Duplicate inbound diabaikan.
-- Echo dari pesan bot baru dikirim diabaikan.
+- Pesan dari nomor bot sendiri (`BOT_PHONE_NUMBER`) diabaikan.
+- Pesan stale (timestamp > 2 menit) diabaikan untuk mencegah replay saat server restart.
+- Status update (delivery/read receipt, status broadcast) diabaikan.
+- Duplicate inbound (ID atau konten sama dalam 60 detik) diabaikan.
+- Echo dari pesan bot baru dikirim (sampai 20 pesan terakhir per nomor, TTL 2 menit) diabaikan.
 - Signature webhook divalidasi dengan secret.
 
 Command user:

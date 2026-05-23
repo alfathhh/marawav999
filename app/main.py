@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from app.config import Settings, get_settings
 from app.conversation.engine import ConversationEngine
 from app.conversation.session_store import SessionStore
-from app.models import UserMessage
+from app.models import SessionState, UserMessage
 from app.services.admin_handoff import AdminHandoffService
 from app.services.ai_client import AiClient
 from app.services.bps_client import BpsClient
@@ -82,6 +82,9 @@ async def gowa_webhook(
     payload = await request.json()
     if _event_name(payload) != "message":
         return {"ok": True, "ignored": True}
+    if _is_status_update(payload):
+        logging.getLogger(__name__).info("webhook.gowa.ignore_status_update")
+        return {"ok": True, "ignored": True, "reason": "status_update"}
     if _is_outgoing_message(payload):
         logging.getLogger(__name__).info("webhook.gowa.ignore_outgoing")
         return {"ok": True, "ignored": True, "reason": "outgoing_message"}
@@ -89,6 +92,12 @@ async def gowa_webhook(
     message = _parse_message(payload)
     if not message.text:
         return {"ok": True, "ignored": True}
+    if _is_stale_message(payload):
+        logging.getLogger(__name__).info("webhook.gowa.ignore_stale_message phone=%s", message.phone if message.text else "unknown")
+        return {"ok": True, "ignored": True, "reason": "stale_message"}
+    if _is_bot_own_message(message.phone, settings):
+        logging.getLogger(__name__).info("webhook.gowa.ignore_bot_own_number phone=%s", message.phone)
+        return {"ok": True, "ignored": True, "reason": "bot_own_number"}
     if _is_duplicate_inbound(request.app.state.recent_inbound_messages, payload, message):
         logging.getLogger(__name__).info("webhook.gowa.ignore_duplicate_inbound phone=%s", message.phone)
         return {"ok": True, "ignored": True, "reason": "duplicate_inbound"}
@@ -214,6 +223,20 @@ def _event_name(payload: dict[str, Any]) -> str:
     return str(payload.get("event") or payload.get("type") or payload.get("event_type") or "").lower()
 
 
+def _is_status_update(payload: dict[str, Any]) -> bool:
+    """Ignore delivery/read receipts and status broadcasts that GOWA may forward."""
+    data = payload.get("payload") or payload.get("data") or payload.get("message") or payload
+    # Check for status broadcast JID
+    sender = str(data.get("from") or data.get("phone") or data.get("sender") or data.get("chat_jid") or "")
+    if "status@broadcast" in sender:
+        return True
+    # Check for receipt/ack event types that may slip through as "message"
+    msg_type = str(data.get("type") or data.get("message_type") or "").lower()
+    if msg_type in {"receipt", "ack", "read", "delivery", "notification"}:
+        return True
+    return False
+
+
 def _parse_message(payload: dict[str, Any]) -> UserMessage:
     data = payload.get("payload") or payload.get("data") or payload.get("message") or payload
     sender = data.get("from") or data.get("phone") or data.get("sender") or data.get("chat_jid") or ""
@@ -273,8 +296,13 @@ def _has_recursive_from_me(value: Any) -> bool:
     return False
 
 
-def _remember_bot_message(cache: dict[str, dict[str, Any]], phone: str, message: str) -> None:
-    cache[phone] = {"message": _normalize_message(message), "ts": time.monotonic()}
+def _remember_bot_message(cache: dict[str, list[dict[str, Any]]], phone: str, message: str) -> None:
+    if phone not in cache:
+        cache[phone] = []
+    cache[phone].append({"message": _normalize_message(message), "ts": time.monotonic()})
+    # Keep only the last 20 messages per phone to avoid unbounded growth
+    if len(cache[phone]) > 20:
+        cache[phone] = cache[phone][-20:]
 
 
 def _should_send_processing_notice(session, message: UserMessage, admin_numbers: list[str]) -> bool:
@@ -356,6 +384,41 @@ async def _send_expired_session_timeout_notices(app: FastAPI, phone: str | None 
             "session_timeout",
             session.phone,
         )
+    # Also handle stuck WAITING_ADMIN sessions
+    for session in app.state.sessions.expired_admin_handoff_sessions():
+        if phone and session.phone != phone:
+            continue
+        admin_timeout_notice = (
+            "Maaf, admin belum bisa merespons saat ini.\n\n"
+            "Bot Marawa sudah aktif kembali. Silakan coba lagi nanti atau pilih layanan lain.\n\n"
+            f"{app.state.engine.main_menu('Saya kembalikan ke menu utama.')}"
+        )
+        try:
+            await app.state.gowa.send_text(session.phone, admin_timeout_notice)
+        except Exception:
+            logging.getLogger(__name__).exception("admin_handoff_timeout.send_failed phone=%s", session.phone)
+            continue
+        logging.getLogger(__name__).info("admin_handoff_timeout.sent phone=%s", session.phone)
+        session.state = SessionState.MAIN_MENU
+        session.handoff_started_at = None
+        session.needs_intro = False
+        app.state.sessions.update(session)
+        _remember_bot_message(app.state.recent_bot_messages, session.phone, admin_timeout_notice)
+        _schedule_sheets_task(
+            app.state.sheets.log_conversation(
+                phone=session.phone,
+                name=session.name,
+                direction="out",
+                state=session.state.value,
+                intent="admin_timeout",
+                message="",
+                bot_response=admin_timeout_notice,
+                metadata={"admin_handoff_timeout": True, "proactive": True},
+                source_url=None,
+            ),
+            "admin_handoff_timeout",
+            session.phone,
+        )
 
 
 def _response_messages(response) -> list[str]:
@@ -371,21 +434,77 @@ def _elapsed_ms(started: float) -> float:
     return (time.perf_counter() - started) * 1000
 
 
-def _is_recent_bot_echo(cache: dict[str, dict[str, Any]], phone: str, message: str, ttl_seconds: int = 120) -> bool:
-    entry = cache.get(phone)
-    if not entry:
+def _is_recent_bot_echo(cache: dict[str, list[dict[str, Any]]], phone: str, message: str, ttl_seconds: int = 120) -> bool:
+    entries = cache.get(phone)
+    if not entries:
         return False
-    if time.monotonic() - float(entry.get("ts", 0)) > ttl_seconds:
+    normalized = _normalize_message(message)
+    now = time.monotonic()
+    # Remove expired entries
+    valid_entries = [entry for entry in entries if now - float(entry.get("ts", 0)) <= ttl_seconds]
+    cache[phone] = valid_entries
+    if not valid_entries:
         cache.pop(phone, None)
         return False
-    return entry.get("message") == _normalize_message(message)
+    return any(entry.get("message") == normalized for entry in valid_entries)
 
 
 def _normalize_message(message: str) -> str:
     return " ".join(message.strip().split()).lower()
 
 
-def _is_duplicate_inbound(cache: dict[str, float], payload: dict[str, Any], message: UserMessage, ttl_seconds: int = 15) -> bool:
+def _is_bot_own_message(phone: str, settings: Settings) -> bool:
+    """Ignore messages coming from the bot's own WhatsApp number."""
+    if not settings.bot_phone_number:
+        return False
+    bot_number = settings.bot_phone_number.replace("+", "").strip()
+    sender_number = phone.replace("+", "").strip()
+    if not bot_number or not sender_number:
+        return False
+    # Match exact or suffix (in case country code formatting differs)
+    return sender_number == bot_number or sender_number.endswith(bot_number) or bot_number.endswith(sender_number)
+
+
+def _is_stale_message(payload: dict[str, Any], max_age_seconds: int = 120) -> bool:
+    """Ignore messages that are too old (e.g. replayed by GOWA after server restart)."""
+    data = payload.get("payload") or payload.get("data") or payload.get("message") or payload
+    # Try to extract message timestamp from various possible fields
+    timestamp = None
+    for key in ("timestamp", "messageTimestamp", "message_timestamp", "t", "time"):
+        value = data.get(key) or payload.get(key)
+        if value is not None:
+            try:
+                ts = int(value)
+                # Timestamps in seconds (10 digits) vs milliseconds (13 digits)
+                if ts > 1_000_000_000_000:
+                    ts = ts // 1000
+                timestamp = ts
+                break
+            except (ValueError, TypeError):
+                continue
+    if timestamp is None:
+        # Also check nested key object
+        key_obj = data.get("key") or data.get("message_key") or {}
+        if isinstance(key_obj, dict):
+            for k in ("timestamp", "messageTimestamp", "t"):
+                value = key_obj.get(k)
+                if value is not None:
+                    try:
+                        ts = int(value)
+                        if ts > 1_000_000_000_000:
+                            ts = ts // 1000
+                        timestamp = ts
+                        break
+                    except (ValueError, TypeError):
+                        continue
+    if timestamp is None:
+        return False  # Can't determine age, allow through
+    now = int(time.time())
+    age = now - timestamp
+    return age > max_age_seconds
+
+
+def _is_duplicate_inbound(cache: dict[str, float], payload: dict[str, Any], message: UserMessage, ttl_seconds: int = 60) -> bool:
     now = time.monotonic()
     expired = [key for key, ts in cache.items() if now - ts > ttl_seconds]
     for key in expired:
