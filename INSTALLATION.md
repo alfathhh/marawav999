@@ -78,6 +78,7 @@ GOWA_BASIC_AUTH_PASS=password-yang-kuat
 GOWA_WEBHOOK_SECRET=secret-yang-panjang-dan-acak
 
 ADMIN_NUMBERS=628xxxx,628yyyy
+BOT_PHONE_NUMBER=628zzzzzzz
 GOOGLE_SHEETS_SPREADSHEET_ID=isi-jika-pakai-google-sheets
 GOOGLE_SERVICE_ACCOUNT_JSON=isi-json-service-account-dalam-satu-baris
 
@@ -89,6 +90,7 @@ Catatan:
 
 - `BPS_DOMAIN=1306` adalah domain BPS Kabupaten Padang Pariaman.
 - `ADMIN_NUMBERS` dipisahkan koma tanpa spasi wajib.
+- `BOT_PHONE_NUMBER` adalah nomor WhatsApp yang dipakai bot. Wajib diisi agar bot tidak memproses echo pesan sendiri saat server restart.
 - Nomor WhatsApp memakai format internasional tanpa tanda `+`, contoh `6281234567890`.
 - Jika Google Sheets belum siap, kosongkan `GOOGLE_SHEETS_SPREADSHEET_ID` dan `GOOGLE_SERVICE_ACCOUNT_JSON`; bot tetap berjalan.
 
@@ -397,6 +399,7 @@ Arti:
 
 - `SESSION_TIMEOUT_SECONDS=600`: sesi user timeout setelah 10 menit.
 - `ADMIN_PICKUP_TIMEOUT_SECONDS=300`: admin dianggap sibuk jika belum pickup setelah 5 menit.
+- Admin handoff timeout (hardcoded 30 menit): jika admin tidak merespons dalam 30 menit, bot otomatis aktif kembali untuk user tanpa menunggu pesan user berikutnya.
 
 Restart:
 

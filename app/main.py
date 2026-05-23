@@ -92,6 +92,9 @@ async def gowa_webhook(
     message = _parse_message(payload)
     if not message.text:
         return {"ok": True, "ignored": True}
+    if _is_stale_message(payload):
+        logging.getLogger(__name__).info("webhook.gowa.ignore_stale_message phone=%s", message.phone if message.text else "unknown")
+        return {"ok": True, "ignored": True, "reason": "stale_message"}
     if _is_bot_own_message(message.phone, settings):
         logging.getLogger(__name__).info("webhook.gowa.ignore_bot_own_number phone=%s", message.phone)
         return {"ok": True, "ignored": True, "reason": "bot_own_number"}
@@ -462,7 +465,46 @@ def _is_bot_own_message(phone: str, settings: Settings) -> bool:
     return sender_number == bot_number or sender_number.endswith(bot_number) or bot_number.endswith(sender_number)
 
 
-def _is_duplicate_inbound(cache: dict[str, float], payload: dict[str, Any], message: UserMessage, ttl_seconds: int = 15) -> bool:
+def _is_stale_message(payload: dict[str, Any], max_age_seconds: int = 120) -> bool:
+    """Ignore messages that are too old (e.g. replayed by GOWA after server restart)."""
+    data = payload.get("payload") or payload.get("data") or payload.get("message") or payload
+    # Try to extract message timestamp from various possible fields
+    timestamp = None
+    for key in ("timestamp", "messageTimestamp", "message_timestamp", "t", "time"):
+        value = data.get(key) or payload.get(key)
+        if value is not None:
+            try:
+                ts = int(value)
+                # Timestamps in seconds (10 digits) vs milliseconds (13 digits)
+                if ts > 1_000_000_000_000:
+                    ts = ts // 1000
+                timestamp = ts
+                break
+            except (ValueError, TypeError):
+                continue
+    if timestamp is None:
+        # Also check nested key object
+        key_obj = data.get("key") or data.get("message_key") or {}
+        if isinstance(key_obj, dict):
+            for k in ("timestamp", "messageTimestamp", "t"):
+                value = key_obj.get(k)
+                if value is not None:
+                    try:
+                        ts = int(value)
+                        if ts > 1_000_000_000_000:
+                            ts = ts // 1000
+                        timestamp = ts
+                        break
+                    except (ValueError, TypeError):
+                        continue
+    if timestamp is None:
+        return False  # Can't determine age, allow through
+    now = int(time.time())
+    age = now - timestamp
+    return age > max_age_seconds
+
+
+def _is_duplicate_inbound(cache: dict[str, float], payload: dict[str, Any], message: UserMessage, ttl_seconds: int = 60) -> bool:
     now = time.monotonic()
     expired = [key for key, ts in cache.items() if now - ts > ttl_seconds]
     for key in expired:
