@@ -133,6 +133,8 @@ async def gowa_webhook(
             "processing_notice",
             message.phone,
         )
+        # Reset session timer after processing notice so timeout starts fresh
+        request.app.state.sessions.update(session)
 
     response = await request.app.state.engine.handle(session, message)
 
@@ -339,6 +341,9 @@ def _remember_bot_message(cache: dict[str, list[dict[str, Any]]], phone: str, me
 
 def _should_send_processing_notice(session, message: UserMessage, admin_numbers: list[str]) -> bool:
     if message.phone in admin_numbers:
+        return False
+    # Don't send processing notice for brand new sessions — greeting will be shown instead
+    if session.needs_intro:
         return False
     normalized = _normalize_message(message.text)
     if not normalized or normalized in {"halo", "hai", "hi", "menu", "batal", "batalkan", "keluar"}:

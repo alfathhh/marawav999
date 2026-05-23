@@ -704,7 +704,20 @@ class BpsClient:
 
     async def _dimension_rows(self, domain: str, model: str, var_id: str, requested_years: list[str]) -> list[dict[str, Any]]:
         try:
-            return self._rows(await self._bps_list(domain, model, var=var_id))
+            first_page = await self._bps_list(domain, model, var=var_id)
+            rows = self._rows(first_page)
+            # Check if there are more pages (BPS API default page size is 10)
+            if isinstance(first_page, dict) and isinstance(first_page.get("data"), list):
+                data = first_page["data"]
+                # data[0] is typically the total count of items
+                total = data[0] if data and isinstance(data[0], int) else 0
+                page_size = 10
+                if total > page_size:
+                    total_pages = (total + page_size - 1) // page_size
+                    for page_num in range(2, total_pages + 1):
+                        next_page = await self._bps_list(domain, model, var=var_id, page=page_num)
+                        rows.extend(self._rows(next_page))
+            return rows
         except httpx.HTTPStatusError as exc:
             logger.warning(
                 "bps.dimension.unavailable model=%s var_id=%s status_code=%s url=%s",
