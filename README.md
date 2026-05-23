@@ -4,11 +4,56 @@ Chatbot WhatsApp Python untuk layanan data BPS Kabupaten Padang Pariaman. Bot me
 
 ## Arsitektur
 
-- `gowa`: WhatsApp gateway memakai image `aldinokemal2104/go-whatsapp-web-multidevice`.
+- `gowa`: WhatsApp gateway build dari fork [`alfathhh/go-whatsapp-web-multidevice`](https://github.com/alfathhh/go-whatsapp-web-multidevice) (submodule di `./gowa`).
 - `marawa-bot`: FastAPI webhook receiver di `POST /webhook/gowa`.
 - `app/conversation`: state machine, session store, timeout, parsing tahun/triwulan.
 - `app/services`: adapter GOWA, BPS WebAPI, AI, Google Sheets, admin handoff.
 - `GuardedDataAgent`: AI hanya boleh memilih aksi yang diizinkan aplikasi, bukan menjalankan tool bebas.
+
+## GOWA — Build dari Fork vs Image Docker Hub
+
+Saat ini GOWA di-build dari fork sendiri (submodule `./gowa`). Kalau mau ganti, edit `docker-compose.yml` bagian `gowa`:
+
+### Opsi A: Build dari fork (default sekarang)
+
+```yaml
+gowa:
+  build:
+    context: ./gowa
+    dockerfile: docker/golang.Dockerfile
+```
+
+Perlu clone submodule dulu:
+
+```bash
+git submodule update --init --recursive
+docker compose up -d --build gowa
+```
+
+Kalau ada update di fork:
+
+```bash
+git submodule update --remote gowa
+git add gowa && git commit -m "chore: update gowa"
+docker compose up -d --build gowa
+```
+
+### Opsi B: Pakai image Docker Hub (upstream original)
+
+Ganti di `docker-compose.yml`:
+
+```yaml
+gowa:
+  image: aldinokemal2104/go-whatsapp-web-multidevice:latest
+```
+
+Lalu:
+
+```bash
+docker compose up -d --force-recreate gowa
+```
+
+> **Note:** Submodule `./gowa` tidak perlu di-clone kalau pakai Opsi B.
 
 ## Deployment & Update
 
