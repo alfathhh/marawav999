@@ -706,14 +706,14 @@ class BpsClient:
         try:
             first_page = await self._bps_list(domain, model, var=var_id)
             rows = self._rows(first_page)
-            # Check if there are more pages (BPS API default page size is 10)
+            # Check if there are more pages
+            # BPS API data[0] is a dict: {"page":1,"pages":2,"per_page":10,"count":10,"total":17}
             if isinstance(first_page, dict) and isinstance(first_page.get("data"), list):
                 data = first_page["data"]
-                # data[0] is typically the total count of items
-                total = data[0] if data and isinstance(data[0], int) else 0
-                page_size = 10
-                if total > page_size:
-                    total_pages = (total + page_size - 1) // page_size
+                pagination = data[0] if data and isinstance(data[0], dict) else {}
+                total_pages = int(pagination.get("pages", 1))
+                if total_pages > 1:
+                    logger.debug("bps.dimension.multipage model=%s var_id=%s total_pages=%d", model, var_id, total_pages)
                     for page_num in range(2, total_pages + 1):
                         next_page = await self._bps_list(domain, model, var=var_id, page=page_num)
                         rows.extend(self._rows(next_page))
