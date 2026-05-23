@@ -37,7 +37,7 @@ class ConversationEngine:
                     return self._with_timeout_notice(
                         session,
                         BotResponse(
-                            self.main_menu("Maaf, admin belum merespons dalam waktu yang ditentukan.\n\nSilakan coba lagi nanti atau pilih layanan lain."),
+                            self.main_menu("Maaf, admin belum merespons. ⏰\n\nSilakan coba lagi nanti atau pilih layanan lain."),
                             Intent.ADMIN,
                             metadata={"admin_timeout": True},
                         ),
@@ -113,17 +113,17 @@ class ConversationEngine:
             session.state = SessionState.MAIN_MENU
             session.handoff_started_at = None
             self._clear_data_context(session)
-            return BotResponse(self.main_menu("Oke, kembali ke menu utama ya."), Intent.MENU)
+            return BotResponse(self.main_menu("Baik, kembali ke menu utama. 🔄"), Intent.MENU)
 
         if lowered == "keluar":
             session.state = SessionState.ENDED
-            return BotResponse("Terima kasih sudah menghubungi Marawa! 🙏\n\nSampai jumpa.", Intent.EXIT)
+            return BotResponse("Terima kasih sudah menghubungi Marawa BPS Padang Pariaman. 🙏\n\nSampai jumpa!", Intent.EXIT)
 
         if session.state == SessionState.WAITING_ADMIN:
             if self.admin_handoff.is_pickup_expired(session):
                 session.state = SessionState.MAIN_MENU
                 session.handoff_started_at = None
-                return BotResponse(self.main_menu("Maaf, admin sedang tidak tersedia saat ini. 😔 Coba lagi nanti ya."), Intent.ADMIN)
+                return BotResponse(self.main_menu("Maaf, admin belum merespons. ⏰\n\nSilakan coba lagi nanti atau pilih layanan lain."), Intent.ADMIN)
             return BotResponse("", should_send=False)
 
         if session.state == SessionState.ASKING_DATA_QUERY:
@@ -180,20 +180,20 @@ class ConversationEngine:
         if intent == Intent.ADMIN:
             await self.admin_handoff.start(session)
             return BotResponse(
-                "Baik, saya sambungkan ke admin. 📞\n\n"
+                "📞 Baik, saya hubungkan ke admin.\n\n"
                 "Bot tidak akan membalas sampai admin selesai membantu.\n\n"
-                "Mau batal? Ketik *batal* atau *menu*.",
+                "Ketik _batal_ atau _menu_ untuk membatalkan.",
                 intent,
             )
         if intent == Intent.EXIT:
             session.state = SessionState.ENDED
-            return BotResponse("Terima kasih sudah menghubungi Marawa! 🙏\n\nSampai jumpa.", intent)
+            return BotResponse("Terima kasih sudah menghubungi Marawa BPS Padang Pariaman. 🙏\n\nSampai jumpa!", intent)
         if intent == Intent.MENU:
             session.state = SessionState.MAIN_MENU
             return BotResponse(self.main_menu(), intent)
         return BotResponse(
-            "Hmm, saya belum paham maksudnya. 🤔\n\n"
-            "Coba pilih: *data*, *konsultasi*, *admin*, atau *keluar*.",
+            "Maaf, saya belum yakin maksudnya. 🤔\n\n"
+            "Silakan pilih: data, konsultasi statistik, admin, atau keluar.",
             Intent.AMBIGUOUS,
         )
 
@@ -285,26 +285,27 @@ class ConversationEngine:
     @staticmethod
     def intro_message() -> str:
         return (
-            "Halo! Saya *Marawa*, asisten data BPS Padang Pariaman. 👋\n\n"
-            "Saya bisa bantu:\n"
-            "1️⃣ Cari data statistik\n"
-            "2️⃣ Konsultasi statistik\n"
+            "Halo! Saya *Marawa*, asisten data BPS Padang Pariaman. 👋\n"
+            "Saya siap membantu layanan berikut:\n\n"
+            "1️⃣ Cari data statistik BPS Kab. Padang Pariaman\n"
+            "2️⃣ Rekomendasi & konsultasi statistik\n"
             "3️⃣ Hubungi admin\n"
             "4️⃣ Akhiri percakapan\n\n"
-            "Ketik angka atau langsung tulis kebutuhanmu, ya."
+            "Silakan ketik nomor atau tuliskan kebutuhan Anda."
         )
 
     @classmethod
     def admin_finished_user_message(cls) -> str:
         return (
-            "✅ Admin sudah selesai membantu.\n\n"
-            "Bot Marawa aktif kembali untuk percakapan ini.\n\n"
-            f"{cls.main_menu('Ada yang bisa saya bantu lagi?')}"
+            "✅ Admin telah menyelesaikan sesi bantuan.\n\n"
+            "Bot Marawa sudah aktif kembali untuk percakapan ini.\n\n"
+            f"{cls.intro_message()}\n\n"
+            f"{cls.main_menu('Silakan pilih layanan yang dibutuhkan.')}"
         )
 
     @staticmethod
     def admin_pickup_user_message() -> str:
-        return "Admin sudah terhubung. Silakan sampaikan kebutuhan Anda langsung."
+        return "📞 Admin sudah terhubung. Silakan sampaikan kebutuhan Anda langsung."
 
     async def _show_data_options(
         self,
@@ -721,12 +722,12 @@ class ConversationEngine:
         }
 
     @staticmethod
-    def main_menu(prefix: str = "Halo! Saya Marawa, asisten data BPS Padang Pariaman. 👋") -> str:
+    def main_menu(prefix: str = "Halo! Saya *Marawa*, asisten data BPS Padang Pariaman. 👋") -> str:
         return (
             f"{prefix}\n\n"
-            "1️⃣ Cari data statistik\n"
-            "2️⃣ Konsultasi statistik\n"
+            "1️⃣ Cari data statistik BPS Kab. Padang Pariaman\n"
+            "2️⃣ Rekomendasi & konsultasi statistik\n"
             "3️⃣ Hubungi admin\n"
             "4️⃣ Akhiri percakapan\n\n"
-            "Ketik angka atau langsung tulis kebutuhanmu."
+            "Silakan ketik nomor atau tuliskan kebutuhan Anda."
         )

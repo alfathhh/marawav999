@@ -108,8 +108,8 @@ async def gowa_webhook(
     request_started = time.perf_counter()
     await _send_expired_session_timeout_notices(request.app, phone=message.phone)
     session = request.app.state.sessions.get(message.phone, message.name)
-    # Immediately refresh updated_at to prevent background timeout monitor from
-    # marking this session as expired while engine is still processing.
+    # Refresh updated_at on message arrival to prevent background timeout monitor
+    # race condition. This will be overwritten after bot sends response (the real timer start).
     request.app.state.sessions.update(session)
     if _should_send_processing_notice(session, message, request.app.state.engine.admin_handoff.admin_numbers):
         processing_message = "Sebentar, saya cari dulu datanya..."
@@ -134,7 +134,6 @@ async def gowa_webhook(
         )
 
     response = await request.app.state.engine.handle(session, message)
-    request.app.state.sessions.update(session)
 
     if response.metadata.get("admin_pickup_for"):
         target_phone = response.metadata["admin_pickup_for"]
@@ -219,6 +218,8 @@ async def gowa_webhook(
                 len(response_messages),
             )
             _remember_bot_message(request.app.state.recent_bot_messages, message.phone, outbound_message)
+        # Refresh updated_at AFTER last message sent — timeout timer starts from here
+        request.app.state.sessions.update(session)
         _schedule_sheets_task(
             request.app.state.sheets.log_conversation(
                 phone=message.phone,
