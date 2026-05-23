@@ -66,3 +66,4 @@ class Session:
     selected_bps_variable: dict[str, Any] | None = None
     last_data_context: dict[str, Any] = field(default_factory=dict)
     learned_data_choices: dict[str, dict[str, Any]] = field(default_factory=dict)
+    processing: bool = False
