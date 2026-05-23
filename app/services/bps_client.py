@@ -485,31 +485,14 @@ class BpsClient:
         )
 
     def _format_grouped_options_summary(self, source_groups: dict[str, list[dict[str, Any]]]) -> str:
-        lines = [
-            "Saya menemukan beberapa hasil yang mungkin sesuai.",
-            "Hasilnya saya bagi berdasarkan sumber data agar lebih mudah dipilih.",
-            "",
-        ]
-        number = 1
-        for source_key, label in (
-            ("dynamic_table", SOURCE_DYNAMIC_TABLE),
-            ("simdasi", SOURCE_SIMDASI),
-            ("publication", SOURCE_PUBLICATION),
-        ):
-            items = source_groups.get(source_key, [])[:DATA_OPTION_PREVIEW_SIZE]
-            if not items:
-                continue
-            lines.append(label)
-            for item in items:
-                lines.append(f"{number}. {self._option_title(item)}")
-                number += 1
-            lines.append("")
-        lines.extend([
-            "Silakan ketik nomor pilihannya.",
-            "Ketik lainnya untuk melihat pilihan berikutnya.",
-            "Ketik lainnya publikasi jika ingin melihat lebih banyak publikasi.",
-        ])
-        return "\n".join(lines).strip()
+        from app.services.wa_formatter import format_data_options, ICON_CHECK
+        source_pages = {key: 0 for key in ("dynamic_table", "simdasi", "publication")}
+        options_message, _, _ = format_data_options(
+            source_groups=source_groups,
+            source_pages=source_pages,
+            page_size=DATA_OPTION_PREVIEW_SIZE,
+        )
+        return options_message
 
     async def fetch_table_by_variable(
         self,
@@ -1378,26 +1361,27 @@ class BpsClient:
 
         selected = matches[0]
         logger.info("bps.simdasi.found query=%r title=%r", query, self._static_table_title(selected))
-        title = self._source_title(SOURCE_SIMDASI, self._static_table_title(selected) or query)
+        from app.services.wa_formatter import ICON_TABLE, ICON_CALENDAR
+        title = self._static_table_title(selected) or query
         release = selected.get("rl_date") or selected.get("release_date") or selected.get("tanggal_rilis") or selected.get("updated_at") or "-"
         source_url = self._static_table_source_url(domain, selected)
         view_payload = await self._static_table_view_payload(domain, selected)
         table = self._extract_table_matrix(view_payload or selected)
         if table:
             summary = self._format_matrix_message(
-                title,
+                f"[{SOURCE_SIMDASI}] {title}",
                 table,
                 intro="Saya belum menemukan data yang sesuai di tabel dinamis, tetapi ada tabel SIMDASI yang terkait.",
-                source="BPS Kabupaten Padang Pariaman via SIMDASI WebAPI.",
+                source="BPS Kab. Padang Pariaman via SIMDASI WebAPI.",
                 note=f"Tanggal/metadata rilis: {release}" if release != "-" else "",
             )
         else:
             summary = (
                 "Saya belum menemukan data yang sesuai di tabel dinamis, tetapi ada tabel SIMDASI yang terkait.\n\n"
-                f"{title}\n"
-                f"Tanggal/metadata rilis: {release}\n"
-                "Isi tabel SIMDASI belum tersedia dalam format yang bisa dibaca otomatis oleh bot.\n\n"
-                "Sumber: BPS Kabupaten Padang Pariaman via SIMDASI WebAPI."
+                f"{ICON_TABLE} *[{SOURCE_SIMDASI}] {title}*\n"
+                f"{ICON_CALENDAR} Tanggal/metadata rilis: {release}\n\n"
+                "_Isi tabel SIMDASI belum tersedia dalam format yang bisa dibaca otomatis oleh bot._\n\n"
+                "_Sumber: BPS Kab. Padang Pariaman via SIMDASI WebAPI._"
             )
         return BpsSearchResult(
             True,
@@ -1435,23 +1419,25 @@ class BpsClient:
 
         selected = publications[0]
         logger.info("bps.publication.found query=%r title=%r", query, selected.get("title") or selected.get("judul"))
-        title = self._source_title(SOURCE_PUBLICATION, selected.get("title") or selected.get("judul") or query)
+        from app.services.wa_formatter import ICON_BOOK, ICON_CALENDAR, ICON_LINK, ICON_PIN
+        title = selected.get("title") or selected.get("judul") or query
         release = selected.get("rl_date") or selected.get("release_date") or selected.get("tanggal_rilis") or "-"
         source_url = self._publication_source_url(domain, selected)
         abstract = selected.get("abstract") or selected.get("abstrak") or selected.get("description") or selected.get("deskripsi") or ""
-        abstract_text = f"\nRingkasan: {str(abstract).strip()}" if abstract else ""
-        link_text = f"\nLink publikasi: {source_url}" if source_url else ""
+        abstract_text = f"\n\n{ICON_PIN} *Ringkasan:*\n{str(abstract).strip()}" if abstract else ""
+        link_text = f"\n\n{ICON_LINK} {source_url}" if source_url else ""
         summary = (
             "Saya belum menemukan data yang sesuai di tabel dinamis, tetapi ada publikasi BPS yang terkait.\n\n"
-            f"{title}\n"
-            f"Tanggal rilis: {release}"
+            f"{ICON_BOOK} *{title}*\n"
+            f"{ICON_CALENDAR} Tanggal rilis: {release}"
             f"{abstract_text}"
-            f"{link_text}\n"
-            "Sumber: BPS Kabupaten Padang Pariaman via WebAPI."
+            f"{link_text}\n\n"
+            "_Sumber: BPS Kab. Padang Pariaman via WebAPI_"
         )
         return BpsSearchResult(True, summary, source_url=source_url, metadata={"query": query, "publication": selected, **(metadata or {})})
 
     async def _simdasi_table_result(self, table_item: dict[str, Any], years: list[str], domain: str) -> BpsTableResult:
+        from app.services.wa_formatter import ICON_TABLE, ICON_CALENDAR, ICON_PIN
         title = self._source_title(SOURCE_SIMDASI, self._static_table_title(table_item) or table_item.get("title") or "Tabel SIMDASI")
         release = table_item.get("rl_date") or table_item.get("release_date") or table_item.get("tanggal_rilis") or table_item.get("updated_at") or "-"
         source_url = table_item.get("source_url") or self._static_table_source_url(domain, table_item)
@@ -1469,13 +1455,13 @@ class BpsClient:
                 note=note,
             )
         else:
-            year_text = f"Tahun diminta: {', '.join(years)}\n" if years else ""
+            year_text = f"{ICON_CALENDAR} Tahun diminta: {', '.join(years)}\n" if years else ""
             message = (
-                f"{title}\n\n"
+                f"{ICON_TABLE} *{title}*\n\n"
                 f"{year_text}"
-                f"Tanggal/metadata rilis: {release}\n"
-                "Isi tabel SIMDASI belum tersedia dalam format yang bisa dibaca otomatis oleh bot.\n\n"
-                "Sumber: BPS Kabupaten Padang Pariaman via SIMDASI WebAPI."
+                f"{ICON_CALENDAR} Tanggal/metadata rilis: {release}\n\n"
+                f"{ICON_PIN} _Isi tabel SIMDASI belum tersedia dalam format yang bisa dibaca otomatis oleh bot._\n\n"
+                "_Sumber: BPS Kab. Padang Pariaman via SIMDASI WebAPI._"
             )
         release_year = str(release)[:4] if re.match(r"\d{4}", str(release)) else ""
         return BpsTableResult(
@@ -1493,21 +1479,19 @@ class BpsClient:
         )
 
     def _publication_table_result(self, publication: dict[str, Any], years: list[str], domain: str) -> BpsTableResult:
+        from app.services.wa_formatter import format_publication
         requested_years = years or []
         release = str(publication.get("rl_date") or publication.get("release_date") or publication.get("tanggal_rilis") or publication.get("release_date") or "-")
         title = str(publication.get("title") or publication.get("judul") or "Publikasi BPS").strip()
         source_url = publication.get("source_url") or self._publication_source_url(domain, publication)
         abstract = publication.get("abstract") or publication.get("abstrak") or publication.get("description") or publication.get("deskripsi") or ""
-        year_note = f"Tahun diminta: {', '.join(requested_years)}\n" if requested_years else ""
-        abstract_text = f"\nRingkasan:\n{str(abstract).strip()}\n" if abstract else ""
-        link_text = f"\nLink publikasi:\n{source_url}\n" if source_url else ""
-        message = (
-            f"[{SOURCE_PUBLICATION}] {title}\n\n"
-            f"{year_note}"
-            f"Tanggal rilis: {release}"
-            f"{abstract_text}"
-            f"{link_text}\n"
-            "Sumber: BPS Kabupaten Padang Pariaman via WebAPI."
+        year_note = f"Tahun diminta: {', '.join(requested_years)}" if requested_years else ""
+        message = format_publication(
+            title=title,
+            release_date=release,
+            abstract=str(abstract).strip(),
+            source_url=source_url,
+            year_note=year_note,
         )
         release_year = release[:4] if re.match(r"\d{4}", release) else ""
         missing_years = [year for year in requested_years if release_year and year != release_year]
@@ -1645,7 +1629,8 @@ class BpsClient:
         return f"https://{host}/id/statistics-table"
 
     def _summarize(self, query: str, variable: dict[str, Any], params: dict[str, str], data: dict[str, Any], domain: str) -> BpsSearchResult:
-        title = self._source_title(SOURCE_DYNAMIC_TABLE, variable.get("title") or variable.get("label") or variable.get("name") or query)
+        from app.services.wa_formatter import ICON_TABLE, ICON_CALENDAR, ICON_DOT
+        title = variable.get("title") or variable.get("label") or variable.get("name") or query
         unit = variable.get("unit") or variable.get("satuan") or self._find_first(data, ("unit", "satuan")) or "-"
         years = self._collect_years(data)
         latest_values = self._collect_values(data)
@@ -1653,21 +1638,21 @@ class BpsClient:
         year_text = ", ".join(years) if years else "tahun tersedia di WebAPI"
         if len(latest_values) > 1 and self._has_datacontent(data):
             summary = (
-                f"Saya menemukan data BPS untuk:\n{title}\n\n"
-                f"Tahun: {year_text}\n"
-                f"Satuan: {unit}\n\n"
+                f"{ICON_TABLE} *{title}*\n\n"
+                f"{ICON_CALENDAR} Tahun: {year_text}\n"
+                f"_Satuan: {unit}_\n\n"
                 "Namun WebAPI mengembalikan beberapa angka rincian tanpa label kategori yang cukup jelas untuk ditampilkan sebagai jawaban final.\n"
                 "Mohon perjelas kategori yang dibutuhkan, misalnya menurut jenis kelamin, kelompok umur, kecamatan, atau tahun tertentu.\n\n"
-                "Sumber: BPS Kabupaten Padang Pariaman via WebAPI."
+                "_Sumber: BPS Kab. Padang Pariaman via WebAPI_"
             )
             return BpsSearchResult(True, summary, source_url=source_url, metadata={"query": query, "variable": variable, "params": params, "raw_keys": list(data.keys()), "needs_clarification": True}, too_many=True)
-        value_text = "\n".join(f"- {item}" for item in latest_values) if latest_values else "- Detail nilai tersedia melalui BPS WebAPI."
+        value_text = "\n".join(f"{ICON_DOT} {item}" for item in latest_values) if latest_values else f"{ICON_DOT} Detail nilai tersedia melalui BPS WebAPI."
         summary = (
-            f"Hasil data BPS Kabupaten Padang Pariaman\n\n{title}\n\n"
-            f"Tahun: {year_text}\n"
-            f"Satuan: {unit}\n"
-            f"{value_text}\n"
-            f"Sumber: BPS Kabupaten Padang Pariaman via WebAPI."
+            f"{ICON_TABLE} *{title}*\n\n"
+            f"{ICON_CALENDAR} Tahun: {year_text}\n"
+            f"_Satuan: {unit}_\n\n"
+            f"{value_text}\n\n"
+            f"_Sumber: BPS Kab. Padang Pariaman via WebAPI_"
         )
         return BpsSearchResult(True, summary, source_url=source_url, metadata={"query": query, "variable": variable, "params": params, "raw_keys": list(data.keys())})
 
@@ -1958,35 +1943,8 @@ class BpsClient:
         table: dict[str, list[str]],
         missing_years: list[str] | None = None,
     ) -> str:
-        year_labels = list(table.keys())
-        max_len = max((len(values) for values in table.values()), default=0)
-        if not row_labels or len(row_labels) != max_len:
-            row_labels = [f"Rincian {index}" for index in range(1, max_len + 1)]
-        header = ["Rincian", *year_labels]
-        rows = []
-        for index, label in enumerate(row_labels):
-            row = [label]
-            for year in year_labels:
-                values = table.get(year, [])
-                row.append(values[index] if index < len(values) else "-")
-            rows.append(row)
-        widths = [len(col) for col in header]
-        for row in rows:
-            widths = [max(width, len(str(cell))) for width, cell in zip(widths, row)]
-
-        def line(cells: list[str]) -> str:
-            return " | ".join(str(cell).ljust(width) for cell, width in zip(cells, widths)).rstrip()
-
-        table_text = "\n".join([line(header), "-+-".join("-" * width for width in widths), *(line(row) for row in rows)])
-        missing_note = ""
-        if missing_years:
-            missing_note = f"\n\nCatatan: data tahun {', '.join(missing_years)} belum tersedia di WebAPI BPS untuk tabel ini."
-        return (
-            f"{title}\n"
-            f"Satuan: {unit}\n\n"
-            f"```text\n{table_text}\n```\n\n"
-            f"Sumber: BPS Kabupaten Padang Pariaman via WebAPI.{missing_note}"
-        )
+        from app.services.wa_formatter import format_dynamic_table
+        return format_dynamic_table(title, unit, row_labels, table, missing_years)
 
     def _format_matrix_message(
         self,
@@ -1996,26 +1954,8 @@ class BpsClient:
         source: str,
         note: str = "",
     ) -> str:
-        normalized_rows = [[str(cell) for cell in row] for row in table if any(str(cell).strip() for cell in row)]
-        if not normalized_rows:
-            return f"{intro}\n{title}\n\nSumber: {source}"
-        max_columns = max(len(row) for row in normalized_rows)
-        rows = [row + [""] * (max_columns - len(row)) for row in normalized_rows]
-        widths = [0] * max_columns
-        for row in rows:
-            widths = [max(width, len(str(cell))) for width, cell in zip(widths, row)]
-
-        def line(cells: list[str]) -> str:
-            return " | ".join(str(cell).ljust(width) for cell, width in zip(cells, widths)).rstrip()
-
-        table_text = "\n".join([line(rows[0]), "-+-".join("-" * width for width in widths), *(line(row) for row in rows[1:])])
-        note_text = f"\n{note}" if note else ""
-        return (
-            f"{intro}\n"
-            f"\n{title}{note_text}\n\n"
-            f"```text\n{table_text}\n```\n\n"
-            f"Sumber: {source}"
-        )
+        from app.services.wa_formatter import format_matrix_table
+        return format_matrix_table(title, table, intro, source, note)
 
     def _extract_table_matrix(self, payload: Any) -> list[list[str]]:
         matrix = self._find_matrix(payload)

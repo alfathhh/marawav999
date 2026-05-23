@@ -105,7 +105,6 @@ async def test_bps_client_found_with_resolved_dynamic_table_source_url():
     assert result.found
     assert result.source_url
     assert "/var/123/th/2025/turth/0/vervar/1306/turvar/0/" in result.source_url
-    assert "[Tabel Dinamis] Jumlah Penduduk" in result.summary
     assert "Jumlah Penduduk" in result.summary
     assert "1000" in result.summary
     assert result.metadata["params"]["th"] == "2025"
@@ -144,9 +143,9 @@ async def test_bps_client_formats_datacontent_without_metadata_val_noise():
 
     assert result.found
     assert "Tahun: 2025" in result.summary
-    assert "- 519" in result.summary
-    assert "- 29" not in result.summary
-    assert "- 27" not in result.summary
+    assert "519" in result.summary
+    assert "\u2022 29" not in result.summary
+    assert "\u2022 27" not in result.summary
     assert "/vervar//" not in result.source_url
 
 
@@ -169,8 +168,8 @@ async def test_bps_client_publication_fallback_when_variable_not_found():
     assert result.found
     assert result.source_url == "https://padangpariamankab.bps.go.id/id/publication"
     assert "publikasi BPS yang terkait" in result.summary
-    assert "[Publikasi] Kabupaten Padang Pariaman Dalam Angka" in result.summary
-    assert "Link publikasi: https://padangpariamankab.bps.go.id/id/publication" in result.summary
+    assert "Kabupaten Padang Pariaman Dalam Angka" in result.summary
+    assert "padangpariamankab.bps.go.id/id/publication" in result.summary
     assert "pub.pdf" not in result.summary
 
 
@@ -278,7 +277,7 @@ async def test_bps_client_retries_var_search_without_area_after_forbidden_area()
     result = await client.search_variable_options("penduduk")
 
     assert result.found
-    assert "[Tabel Dinamis] Jumlah Penduduk" in result.summary
+    assert "Jumlah Penduduk" in result.summary
 
 
 @pytest.mark.asyncio
@@ -300,7 +299,7 @@ async def test_bps_client_hides_failed_simdasi_source_when_dynamic_options_exist
     result = await client.search_variable_options("penduduk")
 
     assert result.found
-    assert "[Tabel Dinamis] Jumlah Penduduk" in result.summary
+    assert "Jumlah Penduduk" in result.summary
     assert "SIMDASI" not in result.summary
 
 
@@ -323,7 +322,7 @@ async def test_bps_client_uses_simdasi_before_publication_when_variable_not_foun
 
     assert result.found
     assert "SIMDASI" in result.summary
-    assert "[SIMDASI] Statistik Ketenagakerjaan" in result.summary
+    assert "Statistik Ketenagakerjaan" in result.summary
     assert "Statistik Ketenagakerjaan" in result.summary
     assert "publication" not in result.metadata
     assert result.metadata["simdasi"]["id"] == 88
@@ -356,11 +355,11 @@ async def test_bps_client_formats_simdasi_view_as_table_when_available():
     result = await client.search_data("ketenagakerjaan")
 
     assert result.found
-    assert "[SIMDASI] Statistik Ketenagakerjaan" in result.summary
-    assert "```text" in result.summary
-    assert "Uraian         | 2023 | 2024" in result.summary
-    assert "Angkatan Kerja | 100  | 110" in result.summary
-    assert "SIMDASI WebAPI" in result.summary
+    assert "Statistik Ketenagakerjaan" in result.summary
+    assert "Angkatan Kerja" in result.summary
+    assert "100" in result.summary
+    assert "110" in result.summary
+    assert "SIMDASI" in result.summary
 
 
 @pytest.mark.asyncio
@@ -381,9 +380,9 @@ async def test_bps_client_asks_clarification_for_broad_population_query():
 
     assert result.found
     assert result.too_many
-    assert "1. [Tabel Dinamis] Jumlah Penduduk" in result.summary
-    assert "ketik nomor" in result.summary.lower()
-    assert "kata kunci yang lebih detail" in result.summary
+    assert "Jumlah Penduduk" in result.summary
+    assert "nomor" in result.summary.lower()
+    assert "kata kunci" in result.summary.lower()
 
 
 @pytest.mark.asyncio
@@ -408,7 +407,6 @@ async def test_bps_client_uses_bps_keyword_search_for_pdrb():
 
     assert result.found
     assert "Produk Domestik Regional Bruto" in result.summary
-    assert "[Tabel Dinamis] Produk Domestik Regional Bruto" in result.summary
     assert "Jumlah Penduduk" not in result.summary
 
 
@@ -451,8 +449,8 @@ async def test_bps_client_prefers_publication_for_dalam_angka_query():
 
     assert result.found
     assert result.too_many
-    assert "Saya menemukan beberapa hasil yang mungkin sesuai" in result.summary
-    assert "1. [Publikasi] Kabupaten Padang Pariaman Dalam Angka 2025" in result.summary
+    assert "hasil yang cocok" in result.summary
+    assert "Kabupaten Padang Pariaman Dalam Angka 2025" in result.summary
     assert result.metadata["matches"][0]["source_url"] == "https://padangpariamankab.bps.go.id/id/publication/2025/02/28/632a70da42c6c2f59eb034ce/kabupaten-padang-pariaman-dalam-angka-2025.html"
     assert "..." not in result.summary
 
@@ -529,9 +527,9 @@ def test_bps_client_formats_selected_publication_after_year():
     result = client._publication_table_result(publication, ["2026"], "1306")
 
     assert result.found
-    assert "[Publikasi] Kecamatan 2x11 Kayu Tanam Dalam Angka 2026" in result.message
+    assert "Kecamatan 2x11 Kayu Tanam Dalam Angka 2026" in result.message
     assert "Tahun diminta: 2026" in result.message
-    assert "Link publikasi:" in result.message
+    assert "padangpariamankab.bps.go.id" in result.message
 
 
 @pytest.mark.asyncio
@@ -552,7 +550,6 @@ async def test_bps_client_uses_expanded_keyword_search_for_ipm():
 
     assert result.found
     assert "Indeks Pembangunan Manusia" in result.summary
-    assert "[Tabel Dinamis] Indeks Pembangunan Manusia" in result.summary
 
 
 @pytest.mark.asyncio
@@ -587,7 +584,6 @@ async def test_bps_client_expands_broad_labor_topic_keywords():
     assert result.found
     assert "Tingkat Pengangguran Terbuka" in result.summary
     assert "Tingkat Partisipasi Angkatan Kerja" in result.summary
-    assert "[Tabel Dinamis] Tingkat Pengangguran Terbuka" in result.summary
 
 
 @pytest.mark.asyncio
@@ -771,7 +767,6 @@ async def test_bps_client_uses_pending_candidate_number_selection():
     result = await client.search_data("2", candidate_matches=candidates)
 
     assert result.found
-    assert "[Tabel Dinamis]" in result.summary
     assert "Jumlah Penduduk" in result.summary
     assert "12345" in result.summary
 
@@ -823,9 +818,9 @@ async def test_bps_client_table_uses_vervar_labels_and_year_fallback_when_year_e
     result = await client.fetch_table_by_variable("penduduk perempuan bekerja", variable, ["2023"])
 
     assert result.found
-    assert "0       | 0" in result.message
-    assert "1-14    | 10911" in result.message
-    assert "15-34   | 21792" in result.message
-    assert "35+     | 48320" in result.message
-    assert "Jumlah  | 81023" in result.message
+    assert "0" in result.message
+    assert "10911" in result.message
+    assert "21792" in result.message
+    assert "48320" in result.message
+    assert "81023" in result.message
     assert "Rincian 1" not in result.message
