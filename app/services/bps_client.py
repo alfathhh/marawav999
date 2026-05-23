@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+from playwright.async_api import async_playwright, Browser
 
 
 logger = logging.getLogger(__name__)
@@ -245,6 +246,111 @@ class BpsClient:
         self._cache_namespace = hashlib.sha256(f"{self.base_url}:{self.api_key}".encode()).hexdigest()[:16]
         self._cache: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
         self._init_sqlite_cache()
+        # Playwright / Cloudflare session state (lazy-initialized)
+        self._pw_instance = None
+        self._pw_browser: Browser | None = None
+        self._cf_cookies: dict[str, str] = {}
+        self._cf_cookies_ts: float = 0.0
+        self._cf_refresh_lock: asyncio.Lock = asyncio.Lock()
+        # Hanya aktifkan Playwright jika base_url mengarah langsung ke BPS
+        # (bukan ke proxy yang sudah handle Cloudflare sendiri)
+        self._use_playwright = "webapi.bps.go.id" in self.base_url
+
+    # --- Playwright / Cloudflare cookie management ---
+
+    _CF_COOKIE_TTL = 25 * 60   # 25 menit (cf_clearance valid ~30 menit)
+    _CF_BROWSER_HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://webapi.bps.go.id/",
+        "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+    }
+
+    async def _ensure_browser(self) -> None:
+        if self._pw_browser is None:
+            logger.info("bps.playwright.starting_browser")
+            self._pw_instance = await async_playwright().start()
+            self._pw_browser = await self._pw_instance.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            )
+            logger.info("bps.playwright.browser_ready")
+
+    async def _solve_cf_challenge(self, url: str) -> dict[str, str]:
+        await self._ensure_browser()
+        logger.info("bps.playwright.solving_cf_challenge url=%s", url)
+        context = await self._pw_browser.new_context(
+            user_agent=self._CF_BROWSER_HEADERS["User-Agent"],
+            locale="id-ID",
+            timezone_id="Asia/Jakarta",
+            viewport={"width": 1280, "height": 800},
+        )
+        try:
+            page = await context.new_page()
+            await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+            for _ in range(30):
+                title = await page.title()
+                if "Just a moment" not in title and "Attention Required" not in title:
+                    break
+                await asyncio.sleep(1)
+            cookies = await context.cookies()
+            result = {c["name"]: c["value"] for c in cookies}
+            logger.info("bps.playwright.cf_solved cookies=%s", list(result.keys()))
+            return result
+        finally:
+            await context.close()
+
+    async def _get_cf_cookies(self, url: str, force: bool = False) -> dict[str, str]:
+        if not self._use_playwright:
+            return {}
+        async with self._cf_refresh_lock:
+            age = time.monotonic() - self._cf_cookies_ts
+            if force or not self._cf_cookies or age > self._CF_COOKIE_TTL:
+                self._cf_cookies = await self._solve_cf_challenge(url)
+                self._cf_cookies_ts = time.monotonic()
+        return self._cf_cookies
+
+    def _is_cf_challenge_response(self, response: httpx.Response) -> bool:
+        if response.status_code != 403:
+            return False
+        ct = response.headers.get("content-type", "")
+        if "text/html" not in ct:
+            return False
+        preview = response.text[:512]
+        return "Just a moment" in preview or "cf_chl" in preview or "Attention Required" in preview
+
+    async def _http_get(self, url: str) -> httpx.Response:
+        """
+        Buat GET request ke BPS. Kalau base_url mengarah ke webapi.bps.go.id
+        (bukan proxy), inject Cloudflare cookies via Playwright secara otomatis.
+        Retry sekali kalau dapat CF challenge.
+        """
+        for attempt in range(2):
+            cookies = await self._get_cf_cookies(url, force=attempt > 0)
+            headers = self._CF_BROWSER_HEADERS if self._use_playwright else {}
+            async with httpx.AsyncClient(
+                timeout=BPS_HTTP_TIMEOUT,
+                follow_redirects=True,
+                headers=headers,
+                cookies=cookies,
+            ) as client:
+                response = await client.get(url)
+            if self._use_playwright and self._is_cf_challenge_response(response):
+                logger.warning("bps.playwright.cf_challenge_on_attempt attempt=%d url=%s", attempt + 1, self._safe_url(url))
+                if attempt == 0:
+                    continue
+            return response
+        return response  # fallback, seharusnya tidak sampai sini
 
     async def search_data(
         self,
@@ -669,27 +775,27 @@ class BpsClient:
         url = f"{self.base_url}/list/model/{model}/lang/ind/domain/{domain}{path_params}/key/{self.api_key}"
         safe_url = self._safe_url(url)
         logger.debug("bps.request model=%s url=%s", model, safe_url)
-        async with httpx.AsyncClient(timeout=BPS_HTTP_TIMEOUT) as client:
-            response = await client.get(url)
-            if response.status_code >= 500:
-                query_url = f"{self.base_url}/list"
-                query_params = {"model": model, "lang": "ind", "domain": domain, "key": self.api_key, **params}
-                logger.warning(
-                    "bps.request.path_failed_retry_query model=%s status_code=%s url=%s",
-                    model,
-                    response.status_code,
-                    safe_url,
-                )
+        response = await self._http_get(url)
+        if response.status_code >= 500:
+            query_url = f"{self.base_url}/list"
+            query_params = {"model": model, "lang": "ind", "domain": domain, "key": self.api_key, **params}
+            logger.warning(
+                "bps.request.path_failed_retry_query model=%s status_code=%s url=%s",
+                model,
+                response.status_code,
+                safe_url,
+            )
+            async with httpx.AsyncClient(timeout=BPS_HTTP_TIMEOUT, cookies=self._cf_cookies, headers=self._CF_BROWSER_HEADERS if self._use_playwright else {}) as client:
                 response = await client.get(query_url, params=query_params)
-            if response.status_code == 403:
-                logger.warning(
-                    "bps.request.forbidden model=%s url=%s — API key mungkin expired atau tidak valid",
-                    model,
-                    safe_url,
-                )
-                return {}
-            response.raise_for_status()
-            payload = response.json()
+        if response.status_code == 403:
+            logger.warning(
+                "bps.request.forbidden model=%s url=%s — API key mungkin expired atau tidak valid",
+                model,
+                safe_url,
+            )
+            return {}
+        response.raise_for_status()
+        payload = response.json()
         self._cache_set(cache_key, payload)
         logger.debug(
             "bps.response model=%s availability=%s row_count=%d",
@@ -712,13 +818,12 @@ class BpsClient:
         )
         safe_url = self._safe_url(url)
         logger.debug("bps.simdasi.request url=%s", safe_url)
-        async with httpx.AsyncClient(timeout=BPS_HTTP_TIMEOUT) as client:
-            response = await client.get(url)
-            if response.status_code == 403:
-                logger.warning("bps.simdasi.forbidden url=%s", safe_url)
-                return {}
-            response.raise_for_status()
-            payload = response.json()
+        response = await self._http_get(url)
+        if response.status_code == 403:
+            logger.warning("bps.simdasi.forbidden url=%s", safe_url)
+            return {}
+        response.raise_for_status()
+        payload = response.json()
         self._cache_set(cache_key, payload)
         logger.debug(
             "bps.simdasi.response availability=%s row_count=%d",
@@ -1289,23 +1394,23 @@ class BpsClient:
         url = f"{self.base_url}/view/domain/{quote(domain)}/model/{model}/lang/ind/id/{quote(item_id)}/key/{self.api_key}"
         safe_url = self._safe_url(url)
         logger.debug("bps.view_request model=%s url=%s", model, safe_url)
-        async with httpx.AsyncClient(timeout=BPS_HTTP_TIMEOUT) as client:
-            response = await client.get(url)
-            if response.status_code >= 500:
-                query_url = f"{self.base_url}/view"
-                query_params = {"domain": domain, "model": model, "lang": "ind", "id": item_id, "key": self.api_key}
-                logger.warning(
-                    "bps.view.path_failed_retry_query model=%s status_code=%s url=%s",
-                    model,
-                    response.status_code,
-                    safe_url,
-                )
+        response = await self._http_get(url)
+        if response.status_code >= 500:
+            query_url = f"{self.base_url}/view"
+            query_params = {"domain": domain, "model": model, "lang": "ind", "id": item_id, "key": self.api_key}
+            logger.warning(
+                "bps.view.path_failed_retry_query model=%s status_code=%s url=%s",
+                model,
+                response.status_code,
+                safe_url,
+            )
+            async with httpx.AsyncClient(timeout=BPS_HTTP_TIMEOUT, cookies=self._cf_cookies, headers=self._CF_BROWSER_HEADERS if self._use_playwright else {}) as client:
                 response = await client.get(query_url, params=query_params)
-            if response.status_code == 403:
-                logger.warning("bps.view.forbidden model=%s url=%s", model, safe_url)
-                return {}
-            response.raise_for_status()
-            payload = response.json()
+        if response.status_code == 403:
+            logger.warning("bps.view.forbidden model=%s url=%s", model, safe_url)
+            return {}
+        response.raise_for_status()
+        payload = response.json()
         self._cache_set(cache_key, payload)
         return payload
 
@@ -1601,10 +1706,9 @@ class BpsClient:
         url = f"{self.base_url}/view/model/statictable/lang/ind/domain/{quote(domain)}/id/{quote(table_id)}/key/{self.api_key}/"
         safe_url = self._safe_url(url)
         logger.debug("bps.simdasi.view_request url=%s", safe_url)
-        async with httpx.AsyncClient(timeout=BPS_HTTP_TIMEOUT) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            payload = response.json()
+        response = await self._http_get(url)
+        response.raise_for_status()
+        payload = response.json()
         self._cache_set(cache_key, payload)
         return payload
 

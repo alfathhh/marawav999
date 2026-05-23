@@ -26,6 +26,8 @@ services:
       - marawa-data:/app/data
     ports:
       - "8000:8000"
+    # Playwright (Chromium) butuh shared memory yang cukup
+    shm_size: "512mb"
 
 volumes:
   gowa-storage:
