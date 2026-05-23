@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from app.config import Settings, get_settings
 from app.conversation.engine import ConversationEngine
 from app.conversation.session_store import SessionStore
-from app.models import UserMessage
+from app.models import SessionState, UserMessage
 from app.services.admin_handoff import AdminHandoffService
 from app.services.ai_client import AiClient
 from app.services.bps_client import BpsClient
@@ -379,6 +379,41 @@ async def _send_expired_session_timeout_notices(app: FastAPI, phone: str | None 
                 source_url=None,
             ),
             "session_timeout",
+            session.phone,
+        )
+    # Also handle stuck WAITING_ADMIN sessions
+    for session in app.state.sessions.expired_admin_handoff_sessions():
+        if phone and session.phone != phone:
+            continue
+        admin_timeout_notice = (
+            "Maaf, admin belum bisa merespons saat ini.\n\n"
+            "Bot Marawa sudah aktif kembali. Silakan coba lagi nanti atau pilih layanan lain.\n\n"
+            f"{app.state.engine.main_menu('Saya kembalikan ke menu utama.')}"
+        )
+        try:
+            await app.state.gowa.send_text(session.phone, admin_timeout_notice)
+        except Exception:
+            logging.getLogger(__name__).exception("admin_handoff_timeout.send_failed phone=%s", session.phone)
+            continue
+        logging.getLogger(__name__).info("admin_handoff_timeout.sent phone=%s", session.phone)
+        session.state = SessionState.MAIN_MENU
+        session.handoff_started_at = None
+        session.needs_intro = False
+        app.state.sessions.update(session)
+        _remember_bot_message(app.state.recent_bot_messages, session.phone, admin_timeout_notice)
+        _schedule_sheets_task(
+            app.state.sheets.log_conversation(
+                phone=session.phone,
+                name=session.name,
+                direction="out",
+                state=session.state.value,
+                intent="admin_timeout",
+                message="",
+                bot_response=admin_timeout_notice,
+                metadata={"admin_handoff_timeout": True, "proactive": True},
+                source_url=None,
+            ),
+            "admin_handoff_timeout",
             session.phone,
         )
 
