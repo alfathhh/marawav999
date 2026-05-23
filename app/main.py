@@ -108,6 +108,9 @@ async def gowa_webhook(
     request_started = time.perf_counter()
     await _send_expired_session_timeout_notices(request.app, phone=message.phone)
     session = request.app.state.sessions.get(message.phone, message.name)
+    # Immediately refresh updated_at to prevent background timeout monitor from
+    # marking this session as expired while engine is still processing.
+    request.app.state.sessions.update(session)
     if _should_send_processing_notice(session, message, request.app.state.engine.admin_handoff.admin_numbers):
         processing_message = "Sebentar, saya cari dulu datanya..."
         processing_started = time.perf_counter()
@@ -340,6 +343,13 @@ def _should_send_processing_notice(session, message: UserMessage, admin_numbers:
         return False
     if normalized in {"data", "minta data", "cari data", "permintaan data", "1"}:
         return False
+    # Navigation commands in CONFIRMING state are instant (no API call needed)
+    if session.state.value == "CONFIRMING_DATA_VARIABLE":
+        nav_words = {"lainnya", "lanjut", "next", "berikutnya", "hasil berikutnya", "sebelumnya", "prev", "previous", "kembali"}
+        if normalized in nav_words or normalized.startswith("lainnya ") or normalized.startswith("sebelumnya "):
+            return False
+        if normalized.strip().isdigit():
+            return False
     if session.state.value in {"ASKING_DATA_QUERY", "CONFIRMING_DATA_VARIABLE", "ASKING_DATA_YEAR"}:
         return True
     data_words = {"data", "publikasi", "simdasi", "ipm", "pdrb", "tpt", "tpak", "penduduk", "ketenagakerjaan", "kemiskinan", "inflasi"}
