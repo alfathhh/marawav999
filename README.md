@@ -474,16 +474,9 @@ Yang bisa akses BPS WebAPI hanya:
 
 Bot lo kan jalan di cloud server. Jadi bot **tidak bisa langsung** minta data ke BPS.
 
-### Solusi: Proxy di Home Server
+Selain itu, BPS WebAPI pakai **Cloudflare Bot Management** yang minta JavaScript challenge — tidak bisa di-bypass dengan HTTP client biasa. Proxy ini pakai **Playwright (Chromium headless)** untuk solve challenge tersebut.
 
-Idenya simpel: lo taruh "perantara" di home server (yang punya IP residential). Perantara ini tugasnya cuma **meneruskan request** dari bot ke BPS, lalu balikin hasilnya ke bot.
-
-**Analoginya:**
-- Bot lo kayak orang yang diblokir masuk toko (BPS).
-- Home server lo kayak temen yang boleh masuk toko.
-- Bot bilang ke temen: "tolong beliin gw data ini" → temen masuk toko → beli → kasih ke bot.
-
-### Arsitektur / Alur Data
+### Cara Kerja Proxy
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -497,111 +490,113 @@ Idenya simpel: lo taruh "perantara" di home server (yang punya IP residential). 
 │                     [Tunnel / Internet]                              │
 │                              │                                      │
 │                              ▼                                      │
-│                  [Home Server - Proxy]                               │
+│              [Home Server - Proxy (Playwright)]                      │
 │                              │                                      │
-│                              │ proxy forward request                 │
+│              ┌───────────────┴────────────────┐                     │
+│              │ Request pertama:                │ Request berikutnya: │
+│              │ Chromium solve CF challenge     │ httpx + cookies     │
+│              │ → dapat cookie cf_clearance     │ (jauh lebih cepat)  │
+│              └───────────────┬────────────────┘                     │
+│                              │ forward request + cookie              │
 │                              ▼                                      │
 │                    [webapi.bps.go.id]                                │
 │                              │                                      │
 │                              │ BPS kasih response (JSON)             │
 │                              ▼                                      │
-│                  [Home Server - Proxy]                               │
-│                              │                                      │
-│                              │ balikin response ke bot               │
-│                              ▼                                      │
-│                     [Tunnel / Internet]                              │
-│                              │                                      │
-│                              ▼                                      │
-│                     [Bot di Cloud Server]                            │
-│                              │                                      │
-│                              │ bot olah data, kirim ke user          │
-│                              ▼                                      │
-│                     [GOWA] → [User WA]                              │
+│              [Home Server - Proxy]  ──→  [Tunnel]  ──→  [Bot]      │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Singkatnya:**
-```
-Bot (cloud) ──request──→ Tunnel ──→ Home Server ──→ BPS WebAPI
-Bot (cloud) ←─response── Tunnel ←── Home Server ←── BPS WebAPI
-```
+**Penjelasan alur:**
+
+1. **Request pertama** (atau saat cookie expired): Proxy buka Chromium headless, buka URL BPS, tunggu Cloudflare challenge selesai otomatis, ambil cookie `cf_clearance` yang didapat.
+2. **Request berikutnya**: Proxy pakai `httpx` biasa + cookie tadi → jauh lebih cepat, tidak perlu buka browser lagi.
+3. **Cookie refresh**: Cookie berlaku ~30 menit. Proxy auto-refresh setiap 25 menit atau kalau tiba-tiba kena challenge lagi.
 
 ### Apa Itu Tunnel?
 
-Masalahnya, home server lo di belakang NAT (router rumah). Dari luar (internet/cloud server) ga bisa langsung akses ke home server lo.
-
-**Tunnel** = cara bikin home server lo bisa diakses dari internet, tanpa perlu:
-- Buka port di router
-- Punya IP publik statis
-- Setting port forwarding
-
-Ada 3 opsi:
+Home server lo di belakang NAT (router rumah) — dari internet tidak bisa langsung akses. Tunnel = cara expose home server ke internet tanpa buka port router.
 
 | Opsi | Cara Kerja | Perlu Domain? | Gratis? |
 |------|-----------|---------------|---------|
-| **Cloudflare Tunnel** | Cloudflare jadi perantara. Lo dapet URL publik (misal `bps-proxy.domain.com`) | Ya (domain di Cloudflare) | Ya |
-| **Tailscale** | VPN mesh. Cloud server & home server seolah di jaringan yang sama | Tidak | Ya (gratis 100 device) |
-| **ZeroTier** | Mirip Tailscale, VPN mesh juga | Tidak | Ya (gratis 25 device) |
+| **Cloudflare Tunnel** | Cloudflare jadi perantara, dapet URL publik | Ya (domain di Cloudflare) | Ya |
+| **Tailscale** | VPN mesh, cloud server & home server satu jaringan | Tidak | Ya (gratis 100 device) |
+| **ZeroTier** | Mirip Tailscale, VPN mesh | Tidak | Ya (gratis 25 device) |
 
 ---
 
 ### STEP 1: Setup Proxy di Home Server
 
-#### Prasyarat Home Server
+#### Prasyarat
 
 - PC/laptop/Raspberry Pi yang **selalu nyala** dan **terkoneksi internet rumah**
 - Docker terinstall
+- RAM minimal **1GB** (Chromium headless butuh memory)
 
 #### 1.1. Copy file proxy ke home server
-
-Dari repo ini, copy folder `proxy/` ke home server. Bisa pakai USB, SCP, atau clone repo:
 
 ```bash
 # Opsi A: clone repo di home server
 git clone https://github.com/alfathhh/marawav999.git
 cd marawav999/proxy
 
-# Opsi B: copy manual via SCP (dari laptop ke home server)
+# Opsi B: copy via SCP dari laptop
 scp -r proxy/ user@ip-home-server:~/bps-proxy/
+cd ~/bps-proxy
 ```
 
-#### 1.2. Jalankan proxy
+#### 1.2. Build dan jalankan proxy
 
 ```bash
-cd ~/bps-proxy    # atau cd marawav999/proxy kalau clone repo
 docker compose up -d --build
 ```
 
-Ini akan:
-- Build image Python + FastAPI
-- Jalankan proxy di port `8001`
-- Auto-restart kalau mati
+> **Note:** Build pertama agak lama (~5-10 menit) karena Playwright perlu download Chromium (~150MB).
 
-#### 1.3. Test proxy dari home server
+#### 1.3. Cek proxy sudah jalan
+
+```bash
+docker compose logs -f bps-proxy
+```
+
+Tunggu sampai muncul log:
+```
+Playwright browser ready
+INFO:     Application startup complete.
+```
+
+#### 1.4. Test proxy
 
 ```bash
 curl "http://localhost:8001/health"
-# Harus balas: {"status":"ok"}
+# Harus balas: {"status":"ok","browser":"playwright"}
+```
 
+Lalu test akses BPS (request pertama akan lambat ~5-10 detik karena Chromium solve challenge):
+
+```bash
 curl "http://localhost:8001/v1/api/list/model/var/lang/ind/domain/1306/page/1/key/API_KEY_LO"
-# Harus balas JSON data dari BPS (bukan 403)
+# Harus balas JSON data dari BPS
 ```
 
-Kalau dapat JSON → proxy **berhasil**. Home server lo memang bisa akses BPS.
+Request berikutnya akan jauh lebih cepat karena pakai cookie cache.
 
-#### 1.4. Apa yang proxy lakukan?
+#### 1.5. Troubleshooting build
 
-File `proxy/proxy_bps.py` isinya sangat simpel:
+Kalau build gagal karena missing apt dependencies:
 
-```python
-# Bot kirim request ke proxy:  GET /v1/api/list/model/var/...?key=xxx
-# Proxy terima, lalu forward ke: GET https://webapi.bps.go.id/v1/api/list/model/var/...?key=xxx
-# BPS balas JSON ke proxy
-# Proxy balikin JSON itu ke bot
+```bash
+docker compose down
+docker compose up -d --build --no-cache
 ```
 
-Proxy ini **tidak menyimpan data**, **tidak perlu API key sendiri**, cuma nerusin apa adanya.
+Kalau container crash dengan error `libgobject` atau sejenisnya, coba update base image:
+
+```bash
+# Edit Dockerfile, ganti FROM python:3.12-slim dengan:
+FROM python:3.12-bullseye
+```
 
 ---
 

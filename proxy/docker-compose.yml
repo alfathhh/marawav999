@@ -4,3 +4,8 @@ services:
     ports:
       - "8001:8001"
     restart: unless-stopped
+    # Playwright butuh shared memory yang cukup untuk Chromium
+    shm_size: "512mb"
+    environment:
+      # Chromium butuh ini di dalam container
+      - DISPLAY=:99
