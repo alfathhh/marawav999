@@ -28,6 +28,26 @@ class ConversationEngine:
         lowered = text.lower()
         session.history.append({"user": text})
         if self._is_greeting(lowered) and user_message.phone not in self.admin_handoff.admin_numbers:
+            # If user was waiting for admin, check timeout status
+            if session.state == SessionState.WAITING_ADMIN:
+                if self.admin_handoff.is_pickup_expired(session):
+                    session.state = SessionState.MAIN_MENU
+                    session.handoff_started_at = None
+                    self._clear_data_context(session)
+                    return self._with_timeout_notice(
+                        session,
+                        BotResponse(
+                            self.main_menu("Maaf, admin belum merespons dalam waktu yang ditentukan.\n\nSilakan coba lagi nanti atau pilih layanan lain."),
+                            Intent.ADMIN,
+                            metadata={"admin_timeout": True},
+                        ),
+                        user_message.phone,
+                    )
+                # Still within timeout window — don't respond, admin may still pick up
+                return BotResponse("", should_send=False)
+            # If user is talking to admin, bot stays silent
+            if session.state == SessionState.TALKING_TO_ADMIN:
+                return BotResponse("", should_send=False)
             session.state = SessionState.MAIN_MENU
             session.handoff_started_at = None
             self._clear_data_context(session)
@@ -46,8 +66,26 @@ class ConversationEngine:
     async def _handle_message(self, session: Session, user_message: UserMessage, text: str, lowered: str) -> BotResponse:
         sender_is_admin = user_message.phone in self.admin_handoff.admin_numbers
         if self.admin_handoff.is_admin_command(text, user_message.phone):
-            target = self.admin_handoff.parse_finished_user(text)
             session.needs_intro = False
+            if self.admin_handoff.is_pickup_command(text, user_message.phone):
+                target = self.admin_handoff.parse_target_user(text)
+                if not target:
+                    return BotResponse(
+                        "Format command admin belum lengkap.\n\n"
+                        "Gunakan format:\n"
+                        "ambil <nomor_user>\n\n"
+                        "Contoh:\n"
+                        "ambil 628112144442",
+                        Intent.ADMIN,
+                        metadata={"admin_command_error": "missing_target"},
+                    )
+                return BotResponse(
+                    f"Baik, Anda mengambil alih percakapan dengan {target}.",
+                    Intent.ADMIN,
+                    metadata={"admin_pickup_for": target},
+                )
+            # "selesai" command
+            target = self.admin_handoff.parse_target_user(text)
             if not target:
                 return BotResponse(
                     "Format command admin belum lengkap.\n\n"
@@ -66,6 +104,10 @@ class ConversationEngine:
             self._clear_data_context(session)
             session.needs_intro = False
             return BotResponse(self.intro_message(), Intent.MENU, metadata={"session_intro": True, "new_session_greeting": True})
+
+        # In TALKING_TO_ADMIN state, bot ignores ALL user messages
+        if session.state == SessionState.TALKING_TO_ADMIN and not sender_is_admin:
+            return BotResponse("", should_send=False)
 
         if lowered in {"menu", "batal", "batalkan"}:
             session.state = SessionState.MAIN_MENU
@@ -260,6 +302,10 @@ class ConversationEngine:
             f"{cls.intro_message()}\n\n"
             f"{cls.main_menu('Silakan pilih layanan yang dibutuhkan.')}"
         )
+
+    @staticmethod
+    def admin_pickup_user_message() -> str:
+        return "Admin sudah terhubung. Silakan sampaikan kebutuhan Anda langsung."
 
     async def _show_data_options(
         self,

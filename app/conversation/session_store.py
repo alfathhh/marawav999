@@ -4,9 +4,10 @@ from app.models import Session, SessionState
 
 
 class SessionStore:
-    def __init__(self, timeout_seconds: int = 600, admin_handoff_timeout_seconds: int = 1800):
+    def __init__(self, timeout_seconds: int = 600, admin_handoff_timeout_seconds: int = 1800, admin_talk_idle_seconds: int = 300):
         self.timeout_seconds = timeout_seconds
         self.admin_handoff_timeout_seconds = admin_handoff_timeout_seconds
+        self.admin_talk_idle_seconds = admin_talk_idle_seconds
         self._sessions: dict[str, Session] = {}
 
     def get(self, phone: str, name: str = "") -> Session:
@@ -34,9 +35,21 @@ class SessionStore:
         return [
             session
             for session in self._sessions.values()
-            if session.state not in {SessionState.ENDED, SessionState.WAITING_ADMIN}
+            if session.state not in {SessionState.ENDED, SessionState.WAITING_ADMIN, SessionState.TALKING_TO_ADMIN}
             and self._is_interactive_expired(session, now)
         ]
+
+    def expired_admin_talk_sessions(self, now: datetime | None = None) -> list[Session]:
+        """Return sessions in TALKING_TO_ADMIN where user has been idle past the timeout."""
+        now = now or datetime.now(timezone.utc)
+        results = []
+        for session in self._sessions.values():
+            if session.state != SessionState.TALKING_TO_ADMIN:
+                continue
+            elapsed = (now - session.updated_at).total_seconds()
+            if elapsed > self.admin_talk_idle_seconds:
+                results.append(session)
+        return results
 
     def expired_admin_handoff_sessions(self, now: datetime | None = None) -> list[Session]:
         """Return sessions stuck in WAITING_ADMIN past the admin handoff timeout."""
@@ -88,7 +101,7 @@ class SessionStore:
         return self._is_interactive_expired(session, now)
 
     def _is_interactive_expired(self, session: Session, now: datetime | None = None) -> bool:
-        if session.state in {SessionState.ENDED, SessionState.WAITING_ADMIN}:
+        if session.state in {SessionState.ENDED, SessionState.WAITING_ADMIN, SessionState.TALKING_TO_ADMIN}:
             return False
         now = now or datetime.now(timezone.utc)
         return (now - session.updated_at).total_seconds() > self.timeout_seconds
