@@ -600,8 +600,6 @@ class BpsClient:
         try:
             return self._rows(await self._bps_list(domain, model, var=var_id))
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code < 500:
-                raise
             logger.warning(
                 "bps.dimension.unavailable model=%s var_id=%s status_code=%s url=%s",
                 model,
@@ -683,6 +681,13 @@ class BpsClient:
                     safe_url,
                 )
                 response = await client.get(query_url, params=query_params)
+            if response.status_code == 403:
+                logger.warning(
+                    "bps.request.forbidden model=%s url=%s — API key mungkin expired atau tidak valid",
+                    model,
+                    safe_url,
+                )
+                return {}
             response.raise_for_status()
             payload = response.json()
         self._cache_set(cache_key, payload)
@@ -709,6 +714,9 @@ class BpsClient:
         logger.debug("bps.simdasi.request url=%s", safe_url)
         async with httpx.AsyncClient(timeout=BPS_HTTP_TIMEOUT) as client:
             response = await client.get(url)
+            if response.status_code == 403:
+                logger.warning("bps.simdasi.forbidden url=%s", safe_url)
+                return {}
             response.raise_for_status()
             payload = response.json()
         self._cache_set(cache_key, payload)
@@ -1293,6 +1301,9 @@ class BpsClient:
                     safe_url,
                 )
                 response = await client.get(query_url, params=query_params)
+            if response.status_code == 403:
+                logger.warning("bps.view.forbidden model=%s url=%s", model, safe_url)
+                return {}
             response.raise_for_status()
             payload = response.json()
         self._cache_set(cache_key, payload)
