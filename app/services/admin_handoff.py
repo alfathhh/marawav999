@@ -23,11 +23,23 @@ class AdminHandoffService:
         return (datetime.now(timezone.utc) - session.handoff_started_at).total_seconds() > self.pickup_timeout_seconds
 
     def is_admin_command(self, text: str, sender: str) -> bool:
-        return sender in self.admin_numbers and text.strip().lower().split(maxsplit=1)[0:1] == ["selesai"]
+        if sender not in self.admin_numbers:
+            return False
+        keyword = text.strip().lower().split(maxsplit=1)[0:1]
+        return keyword == ["selesai"] or keyword == ["ambil"]
 
-    def parse_finished_user(self, text: str) -> str:
+    def is_pickup_command(self, text: str, sender: str) -> bool:
+        if sender not in self.admin_numbers:
+            return False
+        return text.strip().lower().split(maxsplit=1)[0:1] == ["ambil"]
+
+    def parse_target_user(self, text: str) -> str:
+        """Parse target user phone from admin commands like 'ambil 628xxx' or 'selesai 628xxx'."""
         parts = text.strip().split(maxsplit=1)
         return parts[1].strip() if len(parts) == 2 else ""
+
+    def parse_finished_user(self, text: str) -> str:
+        return self.parse_target_user(text)
 
     def _summary(self, session: Session) -> str:
         history = "\n".join(f"- {item.get('user', '')}" for item in session.history)
@@ -40,6 +52,8 @@ class AdminHandoffService:
             "Ringkasan percakapan:\n"
             f"{history or '-'}\n\n"
             "Bot dimatikan sementara untuk user ini.\n\n"
-            "Setelah admin selesai melayani, balas ke nomor bot dengan format:\n"
+            "Untuk mengambil alih percakapan, balas ke nomor bot dengan format:\n"
+            f"ambil {session.phone}\n\n"
+            "Setelah selesai melayani, balas:\n"
             f"selesai {session.phone}"
         )
