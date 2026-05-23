@@ -22,6 +22,19 @@ app = FastAPI(title="BPS WebAPI Proxy")
 BPS_BASE = "https://webapi.bps.go.id"
 TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
+# Cloudflare di depan BPS akan blokir request tanpa browser headers.
+# Pakai headers yang mirip browser biasa.
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Referer": "https://webapi.bps.go.id/",
+}
+
 
 @app.get("/health")
 async def health():
@@ -36,7 +49,7 @@ async def proxy(path: str, request: Request):
     safe_params = {k: (v if k != "key" else "***") for k, v in params.items()}
     logger.info("proxy request: %s params=%s", url, safe_params)
 
-    async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, headers=BROWSER_HEADERS) as client:
         try:
             r = await client.get(url, params=params)
         except httpx.TimeoutException as e:
