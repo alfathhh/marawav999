@@ -1,6 +1,8 @@
 services:
   gowa:
-    image: aldinokemal2104/go-whatsapp-web-multidevice:latest
+    build:
+      context: ./gowa
+      dockerfile: docker/golang.Dockerfile
     restart: unless-stopped
     ports:
       - "3000:3000"
