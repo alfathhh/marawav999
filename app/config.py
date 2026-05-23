@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     bps_api_key: str = Field(default="", alias="BPS_API_KEY")
     bps_domain: str = Field(default="1306", alias="BPS_DOMAIN")
     bps_cache_ttl_seconds: int = Field(default=3600, alias="BPS_CACHE_TTL_SECONDS")
+    bps_base_url: str = Field(default="https://webapi.bps.go.id/v1/api", alias="BPS_BASE_URL")
     bps_cache_db_path: str = Field(default="/app/data/bps_cache.sqlite3", alias="BPS_CACHE_DB_PATH")
 
     ai_provider: str = Field(default="openai", alias="AI_PROVIDER")

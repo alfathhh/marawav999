@@ -462,6 +462,391 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
+## BPS Proxy (Home Server) — Penjelasan Lengkap
+
+### Kenapa Perlu Proxy?
+
+BPS WebAPI (`webapi.bps.go.id`) **memblokir IP dari cloud/VPS**. Artinya kalau bot lo jalan di DigitalOcean, AWS, GCP, atau VPS manapun — semua request ke BPS pasti kena **403 Forbidden**.
+
+Yang bisa akses BPS WebAPI hanya:
+- IP rumah (internet Indihome, MyRepublic, dsb)
+- IP kantor
+
+Bot lo kan jalan di cloud server. Jadi bot **tidak bisa langsung** minta data ke BPS.
+
+### Solusi: Proxy di Home Server
+
+Idenya simpel: lo taruh "perantara" di home server (yang punya IP residential). Perantara ini tugasnya cuma **meneruskan request** dari bot ke BPS, lalu balikin hasilnya ke bot.
+
+**Analoginya:**
+- Bot lo kayak orang yang diblokir masuk toko (BPS).
+- Home server lo kayak temen yang boleh masuk toko.
+- Bot bilang ke temen: "tolong beliin gw data ini" → temen masuk toko → beli → kasih ke bot.
+
+### Arsitektur / Alur Data
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         ALUR REQUEST                                 │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  [User WA] → [GOWA] → [Bot di Cloud Server]                        │
+│                              │                                      │
+│                              │ bot butuh data BPS                    │
+│                              ▼                                      │
+│                     [Tunnel / Internet]                              │
+│                              │                                      │
+│                              ▼                                      │
+│                  [Home Server - Proxy]                               │
+│                              │                                      │
+│                              │ proxy forward request                 │
+│                              ▼                                      │
+│                    [webapi.bps.go.id]                                │
+│                              │                                      │
+│                              │ BPS kasih response (JSON)             │
+│                              ▼                                      │
+│                  [Home Server - Proxy]                               │
+│                              │                                      │
+│                              │ balikin response ke bot               │
+│                              ▼                                      │
+│                     [Tunnel / Internet]                              │
+│                              │                                      │
+│                              ▼                                      │
+│                     [Bot di Cloud Server]                            │
+│                              │                                      │
+│                              │ bot olah data, kirim ke user          │
+│                              ▼                                      │
+│                     [GOWA] → [User WA]                              │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Singkatnya:**
+```
+Bot (cloud) ──request──→ Tunnel ──→ Home Server ──→ BPS WebAPI
+Bot (cloud) ←─response── Tunnel ←── Home Server ←── BPS WebAPI
+```
+
+### Apa Itu Tunnel?
+
+Masalahnya, home server lo di belakang NAT (router rumah). Dari luar (internet/cloud server) ga bisa langsung akses ke home server lo.
+
+**Tunnel** = cara bikin home server lo bisa diakses dari internet, tanpa perlu:
+- Buka port di router
+- Punya IP publik statis
+- Setting port forwarding
+
+Ada 3 opsi:
+
+| Opsi | Cara Kerja | Perlu Domain? | Gratis? |
+|------|-----------|---------------|---------|
+| **Cloudflare Tunnel** | Cloudflare jadi perantara. Lo dapet URL publik (misal `bps-proxy.domain.com`) | Ya (domain di Cloudflare) | Ya |
+| **Tailscale** | VPN mesh. Cloud server & home server seolah di jaringan yang sama | Tidak | Ya (gratis 100 device) |
+| **ZeroTier** | Mirip Tailscale, VPN mesh juga | Tidak | Ya (gratis 25 device) |
+
+---
+
+### STEP 1: Setup Proxy di Home Server
+
+#### Prasyarat Home Server
+
+- PC/laptop/Raspberry Pi yang **selalu nyala** dan **terkoneksi internet rumah**
+- Docker terinstall
+
+#### 1.1. Copy file proxy ke home server
+
+Dari repo ini, copy folder `proxy/` ke home server. Bisa pakai USB, SCP, atau clone repo:
+
+```bash
+# Opsi A: clone repo di home server
+git clone https://github.com/alfathhh/marawav999.git
+cd marawav999/proxy
+
+# Opsi B: copy manual via SCP (dari laptop ke home server)
+scp -r proxy/ user@ip-home-server:~/bps-proxy/
+```
+
+#### 1.2. Jalankan proxy
+
+```bash
+cd ~/bps-proxy    # atau cd marawav999/proxy kalau clone repo
+docker compose up -d --build
+```
+
+Ini akan:
+- Build image Python + FastAPI
+- Jalankan proxy di port `8001`
+- Auto-restart kalau mati
+
+#### 1.3. Test proxy dari home server
+
+```bash
+curl "http://localhost:8001/health"
+# Harus balas: {"status":"ok"}
+
+curl "http://localhost:8001/v1/api/list/model/var/lang/ind/domain/1306/page/1/key/API_KEY_LO"
+# Harus balas JSON data dari BPS (bukan 403)
+```
+
+Kalau dapat JSON → proxy **berhasil**. Home server lo memang bisa akses BPS.
+
+#### 1.4. Apa yang proxy lakukan?
+
+File `proxy/proxy_bps.py` isinya sangat simpel:
+
+```python
+# Bot kirim request ke proxy:  GET /v1/api/list/model/var/...?key=xxx
+# Proxy terima, lalu forward ke: GET https://webapi.bps.go.id/v1/api/list/model/var/...?key=xxx
+# BPS balas JSON ke proxy
+# Proxy balikin JSON itu ke bot
+```
+
+Proxy ini **tidak menyimpan data**, **tidak perlu API key sendiri**, cuma nerusin apa adanya.
+
+---
+
+### STEP 2: Setup Tunnel (Pilih Salah Satu)
+
+Setelah proxy jalan di home server, lo perlu bikin supaya bot di cloud server bisa "nyambung" ke proxy di home server.
+
+---
+
+#### OPSI A: Cloudflare Tunnel (Recommended)
+
+**Kelebihan:** Paling stabil, auto-SSL, bisa custom domain.
+**Syarat:** Lo punya domain yang DNS-nya di Cloudflare.
+
+##### A.1. Install `cloudflared` di home server
+
+```bash
+# Debian/Ubuntu
+curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+sudo dpkg -i cloudflared.deb
+
+# Atau pakai Docker (alternatif)
+docker pull cloudflare/cloudflared:latest
+```
+
+##### A.2. Login ke Cloudflare
+
+```bash
+cloudflared tunnel login
+```
+
+Ini buka browser → login Cloudflare → pilih domain → selesai. File credential tersimpan di `~/.cloudflared/`.
+
+##### A.3. Buat tunnel
+
+```bash
+cloudflared tunnel create bps-proxy
+```
+
+Output: `Created tunnel bps-proxy with id xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+
+Catat **TUNNEL_ID** ini.
+
+##### A.4. Buat config
+
+Buat file `~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: bps-proxy
+credentials-file: /home/USERNAME/.cloudflared/TUNNEL_ID.json
+
+ingress:
+  - hostname: bps-proxy.domainlo.com
+    service: http://localhost:8001
+  - service: http_status:404
+```
+
+Ganti:
+- `USERNAME` = username linux lo di home server
+- `TUNNEL_ID` = ID dari step A.3
+- `bps-proxy.domainlo.com` = subdomain yang lo mau pakai
+
+##### A.5. Tambah DNS record
+
+```bash
+cloudflared tunnel route dns bps-proxy bps-proxy.domainlo.com
+```
+
+Ini otomatis bikin CNAME record di Cloudflare DNS.
+
+##### A.6. Jalankan tunnel
+
+Test dulu:
+```bash
+cloudflared tunnel run bps-proxy
+```
+
+Kalau udah oke, jadikan service (auto-start saat boot):
+```bash
+sudo cloudflared service install
+sudo systemctl enable cloudflared
+sudo systemctl start cloudflared
+```
+
+##### A.7. Test dari mana saja
+
+```bash
+curl https://bps-proxy.domainlo.com/health
+# Harus balas: {"status":"ok"}
+```
+
+Kalau berhasil, berarti tunnel nyambung. Bot di cloud server bisa pakai URL ini.
+
+**Untuk bot, set di `.env`:**
+```env
+BPS_BASE_URL=https://bps-proxy.domainlo.com/v1/api
+```
+
+---
+
+#### OPSI B: Tailscale
+
+**Kelebihan:** Paling gampang, zero config, ga perlu domain.
+**Cara kerja:** Bikin VPN antara cloud server dan home server. Keduanya bisa saling akses via IP private Tailscale (100.x.x.x).
+
+##### B.1. Install Tailscale di KEDUA server (home + cloud)
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+Pertama kali jalankan → buka URL yang muncul → login/approve device.
+
+##### B.2. Cek IP Tailscale home server
+
+```bash
+# Di home server:
+tailscale ip -4
+# Output contoh: 100.64.0.5
+```
+
+Catat IP ini.
+
+##### B.3. Test dari cloud server
+
+```bash
+# Di cloud server (yang jalan bot):
+curl http://100.64.0.5:8001/health
+# Harus balas: {"status":"ok"}
+```
+
+##### B.4. Selesai
+
+**Untuk bot, set di `.env`:**
+```env
+BPS_BASE_URL=http://100.64.0.5:8001/v1/api
+```
+
+> Note: Tailscale pakai HTTP (bukan HTTPS) karena traffic sudah encrypted oleh WireGuard tunnel-nya Tailscale.
+
+---
+
+#### OPSI C: ZeroTier
+
+**Kelebihan:** Mirip Tailscale, open-source.
+**Cara kerja:** Sama kayak Tailscale — VPN mesh, keduanya dapat IP virtual (misal 10.x.x.x).
+
+##### C.1. Buat network di ZeroTier Central
+
+Buka https://my.zerotier.com → Create Network → catat **Network ID**.
+
+##### C.2. Install ZeroTier di KEDUA server
+
+```bash
+curl -s https://install.zerotier.com | sudo bash
+sudo zerotier-cli join NETWORK_ID_LO
+```
+
+##### C.3. Approve device di ZeroTier Central
+
+Buka https://my.zerotier.com → network lo → centang kedua device agar "Authorized".
+
+##### C.4. Cek IP ZeroTier home server
+
+```bash
+# Di home server:
+sudo zerotier-cli listnetworks
+# Cari IP yang dikasih, misal 10.147.20.5
+```
+
+##### C.5. Test dari cloud server
+
+```bash
+curl http://10.147.20.5:8001/health
+```
+
+##### C.6. Selesai
+
+**Untuk bot, set di `.env`:**
+```env
+BPS_BASE_URL=http://10.147.20.5:8001/v1/api
+```
+
+---
+
+### STEP 3: Konfigurasi Bot
+
+Setelah tunnel aktif dan lo bisa akses proxy dari cloud server, tinggal update config bot.
+
+#### 3.1. Edit `.env` di cloud server (tempat bot jalan)
+
+```env
+# Sebelumnya (langsung ke BPS - kena blokir):
+# BPS_BASE_URL=https://webapi.bps.go.id/v1/api
+
+# Sekarang (lewat proxy):
+BPS_BASE_URL=https://bps-proxy.domainlo.com/v1/api    # Cloudflare Tunnel
+# atau
+BPS_BASE_URL=http://100.64.0.5:8001/v1/api            # Tailscale
+# atau
+BPS_BASE_URL=http://10.147.20.5:8001/v1/api           # ZeroTier
+```
+
+#### 3.2. Restart bot
+
+```bash
+docker compose up -d --force-recreate marawa-bot
+```
+
+#### 3.3. Verifikasi bot bisa ambil data
+
+```bash
+docker compose logs -f marawa-bot
+```
+
+Cari log `bps.index.warmup` — kalau ada `found=True` atau jumlah items > 0, berarti bot berhasil ambil data BPS lewat proxy.
+
+---
+
+### Troubleshooting
+
+| Masalah | Solusi |
+|---------|--------|
+| Proxy health OK tapi BPS request gagal | Cek API key BPS masih valid |
+| Tunnel tidak bisa diakses dari cloud | Cek `cloudflared`/`tailscale`/`zerotier` masih jalan di home server |
+| Bot log: connection refused | Cek URL di `BPS_BASE_URL` benar, proxy container jalan |
+| Bot log: timeout | Home server internet lambat, atau proxy container mati |
+| Cloudflare: 502 Bad Gateway | Proxy container di home server mati. Cek `docker compose ps` |
+
+### Monitoring Proxy
+
+Cek status proxy di home server:
+
+```bash
+# Cek container jalan
+docker compose ps
+
+# Cek log proxy
+docker compose logs -f bps-proxy
+
+# Restart kalau bermasalah
+docker compose restart bps-proxy
+```
+
 ## Referensi
 
 - [GOWA GitHub](https://github.com/aldinokemal/go-whatsapp-web-multidevice)
