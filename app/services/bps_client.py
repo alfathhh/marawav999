@@ -1976,7 +1976,16 @@ class BpsClient:
         def visitor(key: str, value: Any) -> None:
             if key.lower() != "datacontent" or not isinstance(value, dict):
                 return
-            for item in value.values():
+            # Sort keys numerically so rows 1..16 come out in order,
+            # not in arbitrary dict insertion order.
+            def _sort_key(k: str) -> tuple:
+                try:
+                    return (0, int(k))
+                except (ValueError, TypeError):
+                    return (1, str(k))
+
+            for item_key in sorted(value.keys(), key=_sort_key):
+                item = value[item_key]
                 if item not in (None, "") and isinstance(item, (str, int, float)):
                     values.append(str(item))
 

@@ -26,6 +26,25 @@ ICON_DOT = "\u2022"             # •
 ICON_DIVIDER = "\u2500" * 20    # ────────────────────
 
 
+def _format_number(value: str) -> str:
+    """Format angka dengan pemisah ribuan jika memungkinkan.
+
+    Contoh: '5152480.52' → '5.152.480,52'
+    """
+    try:
+        num = float(value.replace(",", "."))
+        if num == int(num):
+            # Bilangan bulat
+            return f"{int(num):,}".replace(",", ".")
+        else:
+            # Desimal: gunakan koma sebagai pemisah desimal
+            integer_part = int(num)
+            decimal_part = f"{num:.2f}".split(".")[1]
+            return f"{integer_part:,}".replace(",", ".") + f",{decimal_part}"
+    except (ValueError, TypeError):
+        return value
+
+
 def format_dynamic_table(
     title: str,
     unit: str,
@@ -33,63 +52,70 @@ def format_dynamic_table(
     table: dict[str, list[str]],
     missing_years: list[str] | None = None,
 ) -> str:
-    """Format dynamic table data for WhatsApp display.
-
-    Instead of ASCII pipe-tables, uses a card-style layout:
-    - Each row gets its own line with bold label
-    - Year values listed clearly per row
-    """
+    """Format dynamic table data for WhatsApp display."""
     year_labels = list(table.keys())
     max_len = max((len(values) for values in table.values()), default=0)
 
     if not row_labels or len(row_labels) != max_len:
-        row_labels = [f"Rincian {index}" for index in range(1, max_len + 1)]
+        row_labels = [f"Rincian {i}" for i in range(1, max_len + 1)]
 
     lines: list[str] = []
 
-    # Header
+    # ── Header ──
     lines.append(f"{ICON_TABLE} *{title}*")
     lines.append(f"_Satuan: {unit}_")
-    lines.append("")
 
-    # Check if it's a simple table (few rows, few columns)
-    is_compact = len(row_labels) <= 8 and len(year_labels) <= 4
+    n_rows = len(row_labels)
+    n_years = len(year_labels)
 
-    if is_compact and len(year_labels) > 1:
-        # Multi-year compact: row-by-row with all years
-        for index, label in enumerate(row_labels):
-            lines.append(f"{ICON_DOT} *{label}*")
-            for year in year_labels:
-                values = table.get(year, [])
-                value = values[index] if index < len(values) else "-"
-                lines.append(f"    {year}: {value}")
-            lines.append("")
-    elif is_compact and len(year_labels) == 1:
-        # Single year: simple list
+    if n_years == 1:
+        # ── Single year: daftar label → nilai ──
         year = year_labels[0]
-        lines.append(f"{ICON_CALENDAR} *Tahun {year}*")
+        lines.append(f"📅 *Tahun {year}*")
         lines.append("")
-        for index, label in enumerate(row_labels):
-            values = table.get(year, [])
-            value = values[index] if index < len(values) else "-"
-            lines.append(f"  {ICON_DOT} {label}: *{value}*")
-        lines.append("")
-    else:
-        # Large table: year-by-year sections
-        for year in year_labels:
-            values = table.get(year, [])
-            lines.append(f"{ICON_CALENDAR} *Tahun {year}*")
-            for index, label in enumerate(row_labels):
-                value = values[index] if index < len(values) else "-"
-                lines.append(f"  {ICON_DOT} {label}: {value}")
-            lines.append("")
 
-    # Footer
-    lines.append(f"_Sumber: BPS Kab. Padang Pariaman via WebAPI_")
+        values = table.get(year, [])
+
+        if n_rows <= 6:
+            # Sedikit baris: tampilkan langsung dengan nilai bold
+            for i, label in enumerate(row_labels):
+                val = _format_number(values[i]) if i < len(values) else "-"
+                lines.append(f"• {label}: *{val}*")
+        else:
+            # Banyak baris (mis. 16 lapangan usaha PDRB):
+            # Tampilkan nomor urut + label + nilai, satu per baris
+            for i, label in enumerate(row_labels):
+                val = _format_number(values[i]) if i < len(values) else "-"
+                num = f"{i + 1:2}."
+                lines.append(f"{num} {label}")
+                lines.append(f"    → *{val}*")
+
+    elif n_years <= 4 and n_rows <= 6:
+        # ── Multi-year, sedikit baris: per-baris, semua tahun sejajar ──
+        lines.append("")
+        for i, label in enumerate(row_labels):
+            lines.append(f"• *{label}*")
+            for year in year_labels:
+                vals = table.get(year, [])
+                val = _format_number(vals[i]) if i < len(vals) else "-"
+                lines.append(f"   {year}: {val}")
+
+    else:
+        # ── Multi-year atau banyak baris: per-tahun seksi ──
+        for year in year_labels:
+            vals = table.get(year, [])
+            lines.append("")
+            lines.append(f"📅 *Tahun {year}*")
+            for i, label in enumerate(row_labels):
+                val = _format_number(vals[i]) if i < len(vals) else "-"
+                lines.append(f"  • {label}: {val}")
+
+    # ── Footer ──
+    lines.append("")
+    lines.append("_Sumber: BPS Kab. Padang Pariaman via WebAPI_")
 
     if missing_years:
-        lines.append("")
-        lines.append(f"{ICON_PIN} _Catatan: data tahun {', '.join(missing_years)} belum tersedia di WebAPI BPS._")
+        lines.append(f"{ICON_PIN} _Data tahun {', '.join(missing_years)} belum tersedia._")
 
     return "\n".join(lines).strip()
 
