@@ -146,6 +146,8 @@ Setiap sesi baru, bot memperkenalkan diri dan menampilkan layanan:
 
 Pada sesi baru, pesan pertama user selalu dibalas greeting/menu saja. Pesan pertama belum diproses sebagai permintaan data, admin, atau menu. Ini membuat percakapan aman setelah server/container restart karena semua session in-memory akan reset dan user selalu mulai dari awal lagi. Jika user tidak membalas sampai `SESSION_TIMEOUT_SECONDS`, bot otomatis mengirim pemberitahuan timeout dan sesi diakhiri.
 
+> **Container restart = semua sesi reset.** User yang chat setelah restart akan mulai dari greeting/menu utama.
+
 User boleh mengetik angka, kata kunci, atau kalimat natural.
 
 Contoh alur data:
