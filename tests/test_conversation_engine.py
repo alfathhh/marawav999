@@ -76,7 +76,7 @@ class FakeBps:
         self.last_periods = periods or []
         if self.table_results:
             return self.table_results.pop(0)
-        return BpsTableResult(True, "Jumlah Penduduk\nSatuan: jiwa\n\n```text\nRincian | 2023\nTotal   | 1000\n```")
+        return BpsTableResult(True, "\U0001f4ca *Jumlah Penduduk*\n_Satuan: jiwa_\n\n\U0001f4c5 *Tahun 2023*\n\n  \u2022 Total: *1000*\n\n_Sumber: BPS Kab. Padang Pariaman via WebAPI_")
 
 
 class FakeHandoff:
@@ -141,7 +141,7 @@ async def test_main_menu_to_data_request_options_after_session_opened():
 
     response = await engine.handle(session, message("1"))
 
-    assert "Silakan ketik nomor pilihannya" in response.message
+    assert "Ketik *nomor* untuk memilih" in response.message
     assert not session.needs_intro
     assert session.state == SessionState.CONFIRMING_DATA_VARIABLE
 
@@ -176,7 +176,7 @@ async def test_session_greeting_only_sent_once_per_session():
     assert "Halo, saya Marawa BPS Padang Pariaman." in first.message
     assert "Silakan ketik nomor pilihannya" not in first.message
     assert "Halo, saya Marawa BPS Padang Pariaman." not in second.message
-    assert "Silakan ketik nomor pilihannya" in second.message
+    assert "Ketik *nomor* untuk memilih" in second.message
 
 
 @pytest.mark.asyncio
@@ -269,7 +269,7 @@ async def test_guided_data_flow_selects_option_then_year_table():
 
     options = await engine.handle(session, message("data penduduk"))
     assert session.state == SessionState.CONFIRMING_DATA_VARIABLE
-    assert "Silakan ketik nomor pilihannya" in options.message
+    assert "Ketik *nomor* untuk memilih" in options.message
 
     confirm = await engine.handle(session, message("1"))
     assert session.state == SessionState.ASKING_DATA_YEAR
@@ -277,10 +277,10 @@ async def test_guided_data_flow_selects_option_then_year_table():
 
     table = await engine.handle(session, message("2023"))
     assert session.state == SessionState.MAIN_MENU
-    assert "```text" in table.message
+    assert "Jumlah Penduduk" in table.message
     assert "Saya kembalikan ke menu utama" in table.message
     assert len(table.messages) == 3
-    assert "```text" in table.messages[0]
+    assert "Jumlah Penduduk" in table.messages[0]
     assert "1. Mencari data statistik BPS Kabupaten Padang Pariaman" in table.messages[1]
     assert CONSULTATION_LINK in table.messages[2]
 
@@ -297,10 +297,10 @@ async def test_publication_search_opens_selected_publication_without_asking_year
         table_results=[
             BpsTableResult(
                 True,
-                "[Publikasi] Kecamatan 2x11 Kayu Tanam Dalam Angka 2026\n\n"
-                "Tanggal rilis: 2026-09-26\n\n"
-                "Link publikasi:\nhttps://padangpariamankab.bps.go.id/id/publication/2026/09/26/abc/kecamatan-2x11-kayu-tanam-dalam-angka-2026.html\n\n"
-                "Sumber: BPS Kabupaten Padang Pariaman via WebAPI.",
+                "\U0001f4d6 *Kecamatan 2x11 Kayu Tanam Dalam Angka 2026*\n\n"
+                "\U0001f4c5 Tanggal rilis: 2026-09-26\n\n"
+                "\U0001f517 https://padangpariamankab.bps.go.id/id/publication/2026/09/26/abc/kecamatan-2x11-kayu-tanam-dalam-angka-2026.html\n\n"
+                "_Sumber: BPS Kab. Padang Pariaman via WebAPI_",
             )
         ],
     )
@@ -313,12 +313,12 @@ async def test_publication_search_opens_selected_publication_without_asking_year
 
     options = await engine.handle(session, message("publikasi kecamatan dalam angka"))
     assert session.state == SessionState.CONFIRMING_DATA_VARIABLE
-    assert "1. [Publikasi] Kecamatan 2x11 Kayu Tanam Dalam Angka 2026" in options.message
+    assert "Kecamatan 2x11 Kayu Tanam Dalam Angka 2026" in options.message
 
     confirm = await engine.handle(session, message("1"))
     assert session.state == SessionState.MAIN_MENU
     assert fake_bps.last_years == []
-    assert "[Publikasi] Kecamatan 2x11 Kayu Tanam Dalam Angka 2026" in confirm.message
+    assert "Kecamatan 2x11 Kayu Tanam Dalam Angka 2026" in confirm.message
     assert "Tahun berapa" not in confirm.message
     assert "Saya kembalikan ke menu utama" in confirm.message
 
@@ -330,14 +330,14 @@ async def test_guided_data_flow_uses_years_from_initial_message_after_selection(
     session = active_session()
 
     options = await engine.handle(session, message("butuh data tpt 2020-2021"))
-    assert "Silakan ketik nomor pilihannya" in options.message
+    assert "Ketik *nomor* untuk memilih" in options.message
     assert session.pending_data_years == ["2020", "2021"]
 
     table = await engine.handle(session, message("1"))
 
     assert fake_bps.last_years == ["2020", "2021"]
     assert session.state == SessionState.MAIN_MENU
-    assert "```text" in table.message
+    assert "Jumlah Penduduk" in table.message
 
 
 @pytest.mark.asyncio
@@ -350,7 +350,7 @@ async def test_guided_data_flow_keeps_context_after_unavailable_year():
                 "Tahun yang diminta belum tersedia. Tahun tersedia: 2021, 2020, 2019, 2018",
                 metadata={"reason": "year_unavailable"},
             ),
-            BpsTableResult(True, "TPAK\nSatuan: persen\n\n```text\nRincian | 2018 | 2019\nTotal   | 50   | 51\n```"),
+            BpsTableResult(True, "\U0001f4ca *TPAK*\n_Satuan: persen_\n\n\u2022 *Total*\n    2018: 50\n    2019: 51"),
         ],
     )
     engine = ConversationEngine(FakeAi(Intent.DATA_REQUEST, "tpak"), fake_bps, FakeHandoff())
@@ -369,7 +369,7 @@ async def test_guided_data_flow_keeps_context_after_unavailable_year():
 
     assert fake_bps.last_years == ["2018", "2019"]
     assert session.state == SessionState.MAIN_MENU
-    assert "```text" in table.message
+    assert "TPAK" in table.message
 
 
 @pytest.mark.asyncio
@@ -379,9 +379,9 @@ async def test_guided_data_flow_answers_followup_about_missing_years():
         table_results=[
             BpsTableResult(
                 True,
-                "TPT\nSatuan: persen\n\n```text\nRincian | 2021 | 2020\nTotal   | 6.05 | 7.69\n```\n\n"
-                "Sumber: BPS Kabupaten Padang Pariaman via WebAPI.\n\n"
-                "Catatan: data tahun 2022, 2023, 2024, 2025 belum tersedia di WebAPI BPS untuk tabel ini.",
+                "\U0001f4ca *TPT*\n_Satuan: persen_\n\n\u2022 *Total*\n    2021: 6.05\n    2020: 7.69\n\n"
+                "_Sumber: BPS Kab. Padang Pariaman via WebAPI_\n\n"
+                "\U0001f4cc _Catatan: data tahun 2022, 2023, 2024, 2025 belum tersedia di WebAPI BPS._",
                 metadata={
                     "variable": {"var_id": 1, "title": "TPT Laki-Laki"},
                     "requested_years": ["2020", "2021", "2022", "2023", "2024", "2025"],
@@ -420,15 +420,15 @@ async def test_guided_data_flow_can_page_search_options():
     session = active_session()
 
     first_page = await engine.handle(session, message("data penduduk"))
-    assert "1. [Tabel Dinamis] Pilihan 1" in first_page.message
-    assert "5. [Tabel Dinamis] Pilihan 5" in first_page.message
-    assert "6. [Tabel Dinamis] Pilihan 6" not in first_page.message
-    assert "Ketik lainnya" in first_page.message
+    assert "1. Pilihan 1" in first_page.message
+    assert "5. Pilihan 5" in first_page.message
+    assert "6. Pilihan 6" not in first_page.message
+    assert "lainnya" in first_page.message.lower()
 
     second_page = await engine.handle(session, message("lainnya"))
-    assert "1. [Tabel Dinamis] Pilihan 6" in second_page.message
-    assert "2. [Tabel Dinamis] Pilihan 7" in second_page.message
-    assert "Ketik sebelumnya" in second_page.message
+    assert "1. Pilihan 6" in second_page.message
+    assert "2. Pilihan 7" in second_page.message
+    assert "batal" in second_page.message.lower()
 
     confirm = await engine.handle(session, message("1"))
     assert session.selected_bps_variable["var_id"] == 6
@@ -459,7 +459,7 @@ async def test_guided_data_flow_for_quarterly_variable_asks_quarter():
     table = await engine.handle(session, message("TW 1-2"))
     assert session.state == SessionState.MAIN_MENU
     assert fake_bps.last_periods == ["Triwulan I", "Triwulan II"]
-    assert "```text" in table.message
+    assert "Jumlah Penduduk" in table.message
 
 
 @pytest.mark.asyncio

@@ -560,47 +560,18 @@ class ConversationEngine:
         )
 
     def _format_data_options(self, session: Session) -> tuple[str, str]:
+        from app.services.wa_formatter import format_data_options
         source_groups = session.pending_bps_source_groups or {"dynamic_table": session.pending_bps_matches}
         source_pages = session.pending_bps_source_pages or {source: session.pending_bps_options_page for source in SOURCE_ORDER}
-        visible_choices: list[dict] = []
-        result_lines = [
-            "Saya menemukan beberapa hasil yang mungkin sesuai.",
-            "Hasilnya saya bagi berdasarkan sumber data agar lebih mudah dipilih.",
-            "",
-        ]
-        instruction_lines: list[str] = []
-        choice_number = 1
-        for source in SOURCE_ORDER:
-            items = source_groups.get(source, [])
-            if not items:
-                continue
-            page = source_pages.get(source, 0)
-            start = page * DATA_OPTION_PAGE_SIZE
-            end = start + DATA_OPTION_PAGE_SIZE
-            visible = items[start:end]
-            if not visible:
-                continue
-            result_lines.append(SOURCE_LABELS[source])
-            for item in visible:
-                visible_choices.append(item)
-                result_lines.append(f"{choice_number}. {self._format_option_title(item)}")
-                choice_number += 1
-            result_lines.append("")
-        session.pending_bps_visible_choices = visible_choices
-        instruction_lines.append("Silakan ketik nomor pilihannya.")
-        if self._has_next_source_page(session):
-            instruction_lines.append("Ketik lainnya untuk melihat pilihan berikutnya.")
-        instruction_lines.append("Ketik lainnya publikasi jika ingin melihat lebih banyak publikasi.")
-        instruction_lines.append("Ketik lainnya simdasi untuk melihat lebih banyak tabel SIMDASI.")
-        instruction_lines.append("Ketik lainnya tabel dinamis untuk melihat lebih banyak tabel dinamis.")
-        if self._has_previous_source_page(session):
-            instruction_lines.append("Ketik sebelumnya <sumber> untuk kembali ke pilihan sebelumnya.")
-        instruction_lines.append("Jika belum ada yang sesuai, tuliskan kata kunci yang lebih detail.")
-        instruction_lines.append(self._submenu_navigation_text())
-        return (
-            "\n".join(line for line in result_lines if line is not None).strip(),
-            "\n".join(line for line in instruction_lines if line is not None).strip(),
+
+        options_message, visible_choices, guidance_message = format_data_options(
+            source_groups=source_groups,
+            source_pages=source_pages,
+            page_size=DATA_OPTION_PAGE_SIZE,
+            source_order=SOURCE_ORDER,
         )
+        session.pending_bps_visible_choices = visible_choices
+        return options_message, guidance_message
 
     def _data_options_response(self, session: Session, metadata: dict | None = None) -> BotResponse:
         options_message, guidance_message = self._format_data_options(session)
