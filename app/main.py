@@ -21,6 +21,16 @@ from app.services.gowa_client import GowaClient
 
 BPS_INDEX_WARMUP_QUERIES = ("penduduk", "jumlah penduduk", "ipm", "pdrb", "kemiskinan", "tpt", "tpak")
 
+logger = logging.getLogger(__name__)
+
+_phone_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_phone_lock(phone: str) -> asyncio.Lock:
+    if phone not in _phone_locks:
+        _phone_locks[phone] = asyncio.Lock()
+    return _phone_locks[phone]
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,6 +39,7 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     gowa = GowaClient(settings.gowa_base_url, settings.gowa_basic_auth_user, settings.gowa_basic_auth_pass)
     app.state.sessions = SessionStore(settings.session_timeout_seconds)
+    logger.info("startup: all sessions cleared (fresh container)")
     app.state.sheets = GoogleSheetsLogger(settings.google_sheets_spreadsheet_id, settings.google_service_account_json)
     app.state.recent_bot_messages = {}
     app.state.recent_inbound_messages = {}
@@ -106,148 +117,154 @@ async def gowa_webhook(
         logging.getLogger(__name__).info("webhook.gowa.ignore_recent_bot_echo phone=%s", message.phone)
         return {"ok": True, "ignored": True, "reason": "recent_bot_echo"}
 
-    request_started = time.perf_counter()
-    await _send_expired_session_timeout_notices(request.app, phone=message.phone)
-    session = request.app.state.sessions.get(message.phone, message.name)
-    # Refresh updated_at on message arrival to prevent background timeout monitor
-    # race condition. This will be overwritten after bot sends response (the real timer start).
-    request.app.state.sessions.update(session)
-    if _should_send_processing_notice(session, message, request.app.state.engine.admin_handoff.admin_numbers):
-        processing_message = "Sebentar, saya cari dulu datanya..."
-        processing_started = time.perf_counter()
-        await request.app.state.gowa.send_text(message.phone, processing_message)
-        logging.getLogger(__name__).info("webhook.timing phone=%s send_ms=%.1f kind=processing", message.phone, _elapsed_ms(processing_started))
-        _remember_bot_message(request.app.state.recent_bot_messages, message.phone, processing_message)
-        _schedule_sheets_task(
-            request.app.state.sheets.log_conversation(
-                phone=message.phone,
-                name=message.name,
-                direction="out",
-                state=session.state.value,
-                intent="",
-                message="",
-                bot_response=processing_message,
-                metadata={"processing_notice": True},
-                source_url=None,
-            ),
-            "processing_notice",
-            message.phone,
-        )
-        # Reset session timer after processing notice so timeout starts fresh
+    phone_lock = _get_phone_lock(message.phone)
+    if phone_lock.locked():
+        logging.getLogger(__name__).info("webhook.gowa.ignore_concurrent phone=%s", message.phone)
+        return {"ok": True, "ignored": True, "reason": "concurrent_request"}
+
+    async with phone_lock:
+        request_started = time.perf_counter()
+        await _send_expired_session_timeout_notices(request.app, phone=message.phone)
+        session = request.app.state.sessions.get(message.phone, message.name)
+        # Refresh updated_at on message arrival to prevent background timeout monitor
+        # race condition. This will be overwritten after bot sends response (the real timer start).
         request.app.state.sessions.update(session)
-        # Lock session to prevent timeout while bot is fetching data
-        session.processing = True
-        request.app.state.sessions.update(session)
-
-    response = await request.app.state.engine.handle(session, message)
-
-    if response.metadata.get("admin_pickup_for"):
-        target_phone = response.metadata["admin_pickup_for"]
-        target_session = request.app.state.sessions.get(target_phone)
-        target_session.state = SessionState.TALKING_TO_ADMIN
-        target_session.needs_intro = False
-        request.app.state.sessions.update(target_session)
-        pickup_message = request.app.state.engine.admin_pickup_user_message()
-        send_started = time.perf_counter()
-        await request.app.state.gowa.send_text(target_phone, pickup_message)
-        logging.getLogger(__name__).info("webhook.timing phone=%s send_ms=%.1f kind=admin_pickup_user", target_phone, _elapsed_ms(send_started))
-        _remember_bot_message(request.app.state.recent_bot_messages, target_phone, pickup_message)
-        _schedule_sheets_task(
-            request.app.state.sheets.log_conversation(
-                phone=target_phone,
-                name=target_session.name,
-                direction="out",
-                state=target_session.state.value,
-                intent=response.intent.value if response.intent else "",
-                message="",
-                bot_response=pickup_message,
-                metadata={"admin_pickup_by": message.phone},
-                source_url=None,
-            ),
-            "admin_pickup_conversation",
-            target_phone,
-        )
-
-    if response.metadata.get("admin_done_for"):
-        target_phone = response.metadata["admin_done_for"]
-        target_session = request.app.state.sessions.activate(target_phone)
-        target_session.needs_intro = False
-        user_message = request.app.state.engine.admin_finished_user_message()
-        send_started = time.perf_counter()
-        await request.app.state.gowa.send_text(target_phone, user_message)
-        logging.getLogger(__name__).info("webhook.timing phone=%s send_ms=%.1f kind=admin_done_user", target_phone, _elapsed_ms(send_started))
-        _remember_bot_message(request.app.state.recent_bot_messages, target_phone, user_message)
-        _schedule_sheets_task(request.app.state.sheets.log_user(target_phone, target_session.name, target_session.total_sessions, target_session.state.value), "admin_done_user", target_phone)
-        _schedule_sheets_task(
-            request.app.state.sheets.log_conversation(
-                phone=target_phone,
-                name=target_session.name,
-                direction="out",
-                state=target_session.state.value,
-                intent=response.intent.value if response.intent else "",
-                message="",
-                bot_response=user_message,
-                metadata={"admin_done_by": message.phone},
-                source_url=None,
-            ),
-            "admin_done_conversation",
-            target_phone,
-        )
-
-    _schedule_sheets_task(request.app.state.sheets.log_user(message.phone, message.name, session.total_sessions, session.state.value), "log_user", message.phone)
-    _schedule_sheets_task(
-        request.app.state.sheets.log_conversation(
-            phone=message.phone,
-            name=message.name,
-            direction="in",
-            state=session.state.value,
-            intent=response.intent.value if response.intent else "",
-            message=message.text,
-            bot_response=_joined_response_messages(response),
-            metadata=response.metadata,
-            source_url=response.source_url,
-        ),
-        "inbound",
-        message.phone,
-    )
-
-    if response.should_send:
-        response_messages = _response_messages(response)
-        for index, outbound_message in enumerate(response_messages, start=1):
-            send_started = time.perf_counter()
-            await request.app.state.gowa.send_text(message.phone, outbound_message)
-            logging.getLogger(__name__).info(
-                "webhook.timing phone=%s send_ms=%.1f kind=final part=%d parts=%d",
+        if _should_send_processing_notice(session, message, request.app.state.engine.admin_handoff.admin_numbers):
+            processing_message = "Sebentar, saya cari dulu datanya..."
+            processing_started = time.perf_counter()
+            await request.app.state.gowa.send_text(message.phone, processing_message)
+            logging.getLogger(__name__).info("webhook.timing phone=%s send_ms=%.1f kind=processing", message.phone, _elapsed_ms(processing_started))
+            _remember_bot_message(request.app.state.recent_bot_messages, message.phone, processing_message)
+            _schedule_sheets_task(
+                request.app.state.sheets.log_conversation(
+                    phone=message.phone,
+                    name=message.name,
+                    direction="out",
+                    state=session.state.value,
+                    intent="",
+                    message="",
+                    bot_response=processing_message,
+                    metadata={"processing_notice": True},
+                    source_url=None,
+                ),
+                "processing_notice",
                 message.phone,
-                _elapsed_ms(send_started),
-                index,
-                len(response_messages),
             )
-            _remember_bot_message(request.app.state.recent_bot_messages, message.phone, outbound_message)
-        # Release processing lock and refresh updated_at AFTER last message sent — timeout timer starts from here
-        session.processing = False
-        request.app.state.sessions.update(session)
+            # Reset session timer after processing notice so timeout starts fresh
+            request.app.state.sessions.update(session)
+            # Lock session to prevent timeout while bot is fetching data
+            session.processing = True
+            request.app.state.sessions.update(session)
+
+        response = await request.app.state.engine.handle(session, message)
+
+        if response.metadata.get("admin_pickup_for"):
+            target_phone = response.metadata["admin_pickup_for"]
+            target_session = request.app.state.sessions.get(target_phone)
+            target_session.state = SessionState.TALKING_TO_ADMIN
+            target_session.needs_intro = False
+            request.app.state.sessions.update(target_session)
+            pickup_message = request.app.state.engine.admin_pickup_user_message()
+            send_started = time.perf_counter()
+            await request.app.state.gowa.send_text(target_phone, pickup_message)
+            logging.getLogger(__name__).info("webhook.timing phone=%s send_ms=%.1f kind=admin_pickup_user", target_phone, _elapsed_ms(send_started))
+            _remember_bot_message(request.app.state.recent_bot_messages, target_phone, pickup_message)
+            _schedule_sheets_task(
+                request.app.state.sheets.log_conversation(
+                    phone=target_phone,
+                    name=target_session.name,
+                    direction="out",
+                    state=target_session.state.value,
+                    intent=response.intent.value if response.intent else "",
+                    message="",
+                    bot_response=pickup_message,
+                    metadata={"admin_pickup_by": message.phone},
+                    source_url=None,
+                ),
+                "admin_pickup_conversation",
+                target_phone,
+            )
+
+        if response.metadata.get("admin_done_for"):
+            target_phone = response.metadata["admin_done_for"]
+            target_session = request.app.state.sessions.activate(target_phone)
+            target_session.needs_intro = False
+            user_message = request.app.state.engine.admin_finished_user_message()
+            send_started = time.perf_counter()
+            await request.app.state.gowa.send_text(target_phone, user_message)
+            logging.getLogger(__name__).info("webhook.timing phone=%s send_ms=%.1f kind=admin_done_user", target_phone, _elapsed_ms(send_started))
+            _remember_bot_message(request.app.state.recent_bot_messages, target_phone, user_message)
+            _schedule_sheets_task(request.app.state.sheets.log_user(target_phone, target_session.name, target_session.total_sessions, target_session.state.value), "admin_done_user", target_phone)
+            _schedule_sheets_task(
+                request.app.state.sheets.log_conversation(
+                    phone=target_phone,
+                    name=target_session.name,
+                    direction="out",
+                    state=target_session.state.value,
+                    intent=response.intent.value if response.intent else "",
+                    message="",
+                    bot_response=user_message,
+                    metadata={"admin_done_by": message.phone},
+                    source_url=None,
+                ),
+                "admin_done_conversation",
+                target_phone,
+            )
+
+        _schedule_sheets_task(request.app.state.sheets.log_user(message.phone, message.name, session.total_sessions, session.state.value), "log_user", message.phone)
         _schedule_sheets_task(
             request.app.state.sheets.log_conversation(
                 phone=message.phone,
                 name=message.name,
-                direction="out",
+                direction="in",
                 state=session.state.value,
                 intent=response.intent.value if response.intent else "",
-                message="",
+                message=message.text,
                 bot_response=_joined_response_messages(response),
                 metadata=response.metadata,
                 source_url=response.source_url,
             ),
-            "outbound",
+            "inbound",
             message.phone,
         )
-    else:
-        # Release processing lock even when no response is sent
-        session.processing = False
-        request.app.state.sessions.update(session)
-    logging.getLogger(__name__).info("webhook.timing phone=%s total_ms=%.1f", message.phone, _elapsed_ms(request_started))
-    return {"ok": True}
+
+        if response.should_send:
+            response_messages = _response_messages(response)
+            for index, outbound_message in enumerate(response_messages, start=1):
+                send_started = time.perf_counter()
+                await request.app.state.gowa.send_text(message.phone, outbound_message)
+                logging.getLogger(__name__).info(
+                    "webhook.timing phone=%s send_ms=%.1f kind=final part=%d parts=%d",
+                    message.phone,
+                    _elapsed_ms(send_started),
+                    index,
+                    len(response_messages),
+                )
+                _remember_bot_message(request.app.state.recent_bot_messages, message.phone, outbound_message)
+            # Release processing lock and refresh updated_at AFTER last message sent — timeout timer starts from here
+            session.processing = False
+            request.app.state.sessions.update(session)
+            _schedule_sheets_task(
+                request.app.state.sheets.log_conversation(
+                    phone=message.phone,
+                    name=message.name,
+                    direction="out",
+                    state=session.state.value,
+                    intent=response.intent.value if response.intent else "",
+                    message="",
+                    bot_response=_joined_response_messages(response),
+                    metadata=response.metadata,
+                    source_url=response.source_url,
+                ),
+                "outbound",
+                message.phone,
+            )
+        else:
+            # Release processing lock even when no response is sent
+            session.processing = False
+            request.app.state.sessions.update(session)
+        logging.getLogger(__name__).info("webhook.timing phone=%s total_ms=%.1f", message.phone, _elapsed_ms(request_started))
+        return {"ok": True}
 
 
 def _verify_signature(body: bytes, secret: str, signature: str | None) -> None:
