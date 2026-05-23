@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     gowa_webhook_secret: str = Field(default="secret", alias="GOWA_WEBHOOK_SECRET")
 
     admin_numbers: str = Field(default="", alias="ADMIN_NUMBERS")
+    bot_phone_number: str = Field(default="", alias="BOT_PHONE_NUMBER")
     google_sheets_spreadsheet_id: str = Field(default="", alias="GOOGLE_SHEETS_SPREADSHEET_ID")
     google_service_account_json: str = Field(default="", alias="GOOGLE_SERVICE_ACCOUNT_JSON")
 
