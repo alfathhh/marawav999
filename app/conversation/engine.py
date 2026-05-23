@@ -28,6 +28,23 @@ class ConversationEngine:
         lowered = text.lower()
         session.history.append({"user": text})
         if self._is_greeting(lowered) and user_message.phone not in self.admin_handoff.admin_numbers:
+            # If user was waiting for admin, check timeout status
+            if session.state == SessionState.WAITING_ADMIN:
+                if self.admin_handoff.is_pickup_expired(session):
+                    session.state = SessionState.MAIN_MENU
+                    session.handoff_started_at = None
+                    self._clear_data_context(session)
+                    return self._with_timeout_notice(
+                        session,
+                        BotResponse(
+                            self.main_menu("Maaf, admin belum merespons dalam waktu yang ditentukan.\n\nSilakan coba lagi nanti atau pilih layanan lain."),
+                            Intent.ADMIN,
+                            metadata={"admin_timeout": True},
+                        ),
+                        user_message.phone,
+                    )
+                # Still within timeout window — don't respond, admin may still pick up
+                return BotResponse("", should_send=False)
             session.state = SessionState.MAIN_MENU
             session.handoff_started_at = None
             self._clear_data_context(session)
