@@ -1,0 +1,3 @@
+[submodule "gowa"]
+	path = gowa
+	url = https://github.com/alfathhh/go-whatsapp-web-multidevice.git
