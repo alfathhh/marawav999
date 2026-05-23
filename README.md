@@ -46,6 +46,7 @@ GOWA_BASIC_AUTH_PASS=isi_password
 GOWA_WEBHOOK_SECRET=isi_secret_webhook
 
 ADMIN_NUMBERS=628xxxx,628yyyy
+BOT_PHONE_NUMBER=628zzzzzzz
 SESSION_TIMEOUT_SECONDS=600
 ADMIN_PICKUP_TIMEOUT_SECONDS=300
 
@@ -376,10 +377,24 @@ Setelah mengubah kalimat atau kode, restart bot:
 docker compose up -d --force-recreate marawa-bot
 ```
 
+## Proteksi Pesan Duplikat dan Stale
+
+Bot punya beberapa lapisan proteksi agar tidak memproses pesan yang seharusnya diabaikan:
+
+1. **Outgoing message filter**: pesan dari bot sendiri (flag `fromMe`) langsung di-skip.
+2. **Bot own number filter**: jika `BOT_PHONE_NUMBER` diset di `.env`, pesan dari nomor tersebut langsung di-skip.
+3. **Stale message filter**: pesan yang timestamp-nya lebih dari 2 menit (dari payload webhook) langsung di-skip. Ini mencegah GOWA replay pesan lama saat server restart.
+4. **Status update filter**: delivery receipt, read receipt, dan status broadcast diabaikan.
+5. **Duplicate inbound filter**: pesan dengan ID atau konten yang sama dalam 60 detik terakhir di-skip.
+6. **Bot echo filter**: jika teks pesan masuk sama persis dengan pesan yang baru saja dikirim bot (dalam 2 menit terakhir), di-skip. Bot menyimpan sampai 20 pesan terakhir per nomor.
+
+Semua filter ini mencegah masalah "bot tiba-tiba kirim pesan saat server baru dinyalakan".
+
 ## Timeout
 
 - Session user umum: `SESSION_TIMEOUT_SECONDS=600` atau 10 menit.
 - Tunggu admin: `ADMIN_PICKUP_TIMEOUT_SECONDS=300` atau 5 menit.
+- Admin handoff stuck: jika admin tidak merespons dalam 30 menit, bot otomatis mengaktifkan diri kembali untuk user dan mengirim pemberitahuan.
 
 Nilai bisa diubah di `.env`.
 
