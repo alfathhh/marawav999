@@ -133,6 +133,11 @@ async def gowa_webhook(
             "processing_notice",
             message.phone,
         )
+        # Reset session timer after processing notice so timeout starts fresh
+        request.app.state.sessions.update(session)
+        # Lock session to prevent timeout while bot is fetching data
+        session.processing = True
+        request.app.state.sessions.update(session)
 
     response = await request.app.state.engine.handle(session, message)
 
@@ -219,7 +224,8 @@ async def gowa_webhook(
                 len(response_messages),
             )
             _remember_bot_message(request.app.state.recent_bot_messages, message.phone, outbound_message)
-        # Refresh updated_at AFTER last message sent — timeout timer starts from here
+        # Release processing lock and refresh updated_at AFTER last message sent — timeout timer starts from here
+        session.processing = False
         request.app.state.sessions.update(session)
         _schedule_sheets_task(
             request.app.state.sheets.log_conversation(
@@ -236,6 +242,10 @@ async def gowa_webhook(
             "outbound",
             message.phone,
         )
+    else:
+        # Release processing lock even when no response is sent
+        session.processing = False
+        request.app.state.sessions.update(session)
     logging.getLogger(__name__).info("webhook.timing phone=%s total_ms=%.1f", message.phone, _elapsed_ms(request_started))
     return {"ok": True}
 
@@ -339,6 +349,9 @@ def _remember_bot_message(cache: dict[str, list[dict[str, Any]]], phone: str, me
 
 def _should_send_processing_notice(session, message: UserMessage, admin_numbers: list[str]) -> bool:
     if message.phone in admin_numbers:
+        return False
+    # Don't send processing notice for brand new sessions — greeting will be shown instead
+    if session.needs_intro:
         return False
     normalized = _normalize_message(message.text)
     if not normalized or normalized in {"halo", "hai", "hi", "menu", "batal", "batalkan", "keluar"}:

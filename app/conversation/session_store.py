@@ -36,6 +36,7 @@ class SessionStore:
             session
             for session in self._sessions.values()
             if session.state not in {SessionState.ENDED, SessionState.WAITING_ADMIN, SessionState.TALKING_TO_ADMIN}
+            and not session.processing
             and self._is_interactive_expired(session, now)
         ]
 

@@ -242,6 +242,7 @@ def format_data_options(
 
     choice_number = 1
     has_next = False
+    has_prev = any(source_pages.get(source, 0) > 0 for source in source_order)
 
     for source in source_order:
         items = source_groups.get(source, [])
@@ -271,6 +272,8 @@ def format_data_options(
     guidance_lines.append("👉 Ketik *nomor* untuk memilih.")
     if has_next:
         guidance_lines.append("👉 Ketik *lainnya* untuk hasil berikutnya.")
+    if has_prev:
+        guidance_lines.append("👉 Ketik *sebelumnya* untuk halaman sebelumnya.")
     guidance_lines.append("")
     guidance_lines.append("Atau tulis kata kunci baru yang lebih spesifik.")
     guidance_lines.append("🔙 _batal_ = kembali | _menu_ = menu utama")
