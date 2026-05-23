@@ -524,9 +524,9 @@ async def test_admin_sender_never_receives_session_intro_for_regular_reply():
 def test_admin_finished_user_message_returns_intro_and_menu():
     message_text = ConversationEngine.admin_finished_user_message()
 
-    assert "Admin sudah selesai membantu" in message_text
+    assert "Admin telah menyelesaikan sesi bantuan" in message_text
     assert "Marawa" in message_text
-    assert "Cari data statistik" in message_text
+    assert "Cari data statistik BPS Kab. Padang Pariaman" in message_text
 
 
 def test_general_timeout_starts_new_session():

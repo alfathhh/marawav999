@@ -10,6 +10,30 @@ Chatbot WhatsApp Python untuk layanan data BPS Kabupaten Padang Pariaman. Bot me
 - `app/services`: adapter GOWA, BPS WebAPI, AI, Google Sheets, admin handoff.
 - `GuardedDataAgent`: AI hanya boleh memilih aksi yang diizinkan aplikasi, bukan menjalankan tool bebas.
 
+## Deployment & Update
+
+Setelah ada perubahan kode (merge PR / pull dari GitHub):
+
+```bash
+# 1. Pull perubahan terbaru
+git pull origin main
+
+# 2. Rebuild dan restart bot
+docker compose up -d --build marawa-bot
+```
+
+Kalau hanya ingin restart tanpa rebuild (misal ubah `.env`):
+
+```bash
+docker compose up -d --force-recreate marawa-bot
+```
+
+Untuk melihat log setelah update:
+
+```bash
+docker compose logs -f marawa-bot
+```
+
 ## Instalasi Dari Nol
 
 1. Masuk ke folder proyek:
@@ -115,10 +139,10 @@ Pastikan:
 
 Setiap sesi baru, bot memperkenalkan diri dan menampilkan layanan:
 
-1. Mencari data statistik BPS Kabupaten Padang Pariaman.
-2. Rekomendasi dan konsultasi statistik.
-3. Menghubungkan Anda dengan admin.
-4. Mengakhiri percakapan.
+1️⃣ Cari data statistik BPS Kab. Padang Pariaman
+2️⃣ Rekomendasi & konsultasi statistik
+3️⃣ Hubungi admin
+4️⃣ Akhiri percakapan
 
 Pada sesi baru, pesan pertama user selalu dibalas greeting/menu saja. Pesan pertama belum diproses sebagai permintaan data, admin, atau menu. Ini membuat percakapan aman setelah server/container restart karena semua session in-memory akan reset dan user selalu mulai dari awal lagi. Jika user tidak membalas sampai `SESSION_TIMEOUT_SECONDS`, bot otomatis mengirim pemberitahuan timeout dan sesi diakhiri.
 
@@ -322,20 +346,21 @@ Untuk saat ini, cara yang direkomendasikan tetap lewat script pencarian di atas 
 
 User masuk mode admin dengan memilih menu 3 atau mengetik `admin`.
 
-Saat handoff aktif:
+Flow lengkap:
 
-- Bot mengirim notifikasi ke semua nomor di `ADMIN_NUMBERS`.
-- Bot diam untuk user tersebut.
-- User bisa membatalkan dengan `batal`, `batalkan`, `menu`, atau `keluar`.
-- Jika admin belum merespons dalam `ADMIN_PICKUP_TIMEOUT_SECONDS`, bot kembali ke menu utama.
+1. User minta bicara admin → state `WAITING_ADMIN`, notifikasi ke semua `ADMIN_NUMBERS`.
+2. Admin ambil alih dengan mengirim ke nomor bot: `ambil 628xxxxxxxx` → state `TALKING_TO_ADMIN`, user dapat notifikasi "Admin sudah terhubung".
+3. Admin berkomunikasi dengan user melalui WA bot. Bot diam total (semua pesan user diabaikan, termasuk `batal`/`menu`).
+4. Admin selesai, kirim ke nomor bot: `selesai 628xxxxxxxx` → bot aktif kembali, user dapat menu utama.
 
-Admin menutup handoff dengan mengirim ke nomor bot:
+Timeout:
+- Jika admin belum `ambil` dalam `ADMIN_PICKUP_TIMEOUT_SECONDS` (default 5 menit), bot kembali aktif + info "admin belum merespons".
+- Jika user diam selama 5 menit setelah admin terhubung (`TALKING_TO_ADMIN`), percakapan diakhiri otomatis.
+- Jika admin lupa `selesai` dan tidak ada aktivitas selama 30 menit, bot otomatis aktif kembali.
 
-```text
-selesai 628xxxxxxxx
-```
-
-Jika admin hanya mengetik `selesai`, bot akan membalas format yang benar. Admin tidak akan mendapat pesan pembuka user. Setelah `selesai <nomor_user>`, user dikabari bahwa bot aktif kembali, lalu mendapat salam dan menu utama.
+Command admin (dikirim dari nomor admin ke nomor bot):
+- `ambil 628xxx` — mengambil alih percakapan user
+- `selesai 628xxx` — mengakhiri sesi admin, bot aktif kembali
 
 ## AI Provider
 
@@ -392,9 +417,12 @@ Semua filter ini mencegah masalah "bot tiba-tiba kirim pesan saat server baru di
 
 ## Timeout
 
-- Session user umum: `SESSION_TIMEOUT_SECONDS=600` atau 10 menit.
-- Tunggu admin: `ADMIN_PICKUP_TIMEOUT_SECONDS=300` atau 5 menit.
-- Admin handoff stuck: jika admin tidak merespons dalam 30 menit, bot otomatis mengaktifkan diri kembali untuk user dan mengirim pemberitahuan.
+Timer idle dihitung dari **pesan terakhir yang bot kirim** ke user. Timer di-reset setiap kali user mengirim pesan.
+
+- Session user umum: `SESSION_TIMEOUT_SECONDS=600` (10 menit sejak bot terakhir kirim pesan).
+- Tunggu admin pickup: `ADMIN_PICKUP_TIMEOUT_SECONDS=300` (5 menit).
+- Admin talk idle: jika user diam 5 menit setelah admin terhubung, percakapan diakhiri.
+- Admin handoff stuck: jika admin tidak merespons dalam 30 menit, bot otomatis aktif kembali.
 
 Nilai bisa diubah di `.env`.
 
