@@ -113,22 +113,22 @@ class ConversationEngine:
             session.state = SessionState.MAIN_MENU
             session.handoff_started_at = None
             self._clear_data_context(session)
-            return BotResponse(self.main_menu("Baik, saya kembalikan ke menu utama."), Intent.MENU)
+            return BotResponse(self.main_menu("Oke, kembali ke menu utama ya."), Intent.MENU)
 
         if lowered == "keluar":
             session.state = SessionState.ENDED
-            return BotResponse("Terima kasih sudah menghubungi Marawa BPS Padang Pariaman.\n\nSampai jumpa.", Intent.EXIT)
+            return BotResponse("Terima kasih sudah menghubungi Marawa! 🙏\n\nSampai jumpa.", Intent.EXIT)
 
         if session.state == SessionState.WAITING_ADMIN:
             if self.admin_handoff.is_pickup_expired(session):
                 session.state = SessionState.MAIN_MENU
                 session.handoff_started_at = None
-                return BotResponse(self.main_menu("Maaf, admin sedang sibuk saat ini. Silakan coba lagi nanti."), Intent.ADMIN)
+                return BotResponse(self.main_menu("Maaf, admin sedang tidak tersedia saat ini. 😔 Coba lagi nanti ya."), Intent.ADMIN)
             return BotResponse("", should_send=False)
 
         if session.state == SessionState.ASKING_DATA_QUERY:
             if self._is_generic_data_request(text):
-                return BotResponse(self._with_submenu_navigation("Boleh. Data apa yang ingin dicari?"), Intent.DATA_REQUEST)
+                return BotResponse(self._with_submenu_navigation("Boleh! 📊 Data apa yang mau dicari?"), Intent.DATA_REQUEST)
             decision = await self.agent.plan(session, text)
             guarded_response = self._guarded_agent_response(decision)
             if guarded_response:
@@ -167,12 +167,12 @@ class ConversationEngine:
                     periods=decision.periods,
                 )
             session.state = SessionState.ASKING_DATA_QUERY
-            return BotResponse(self._with_submenu_navigation("Boleh. Data apa yang ingin dicari?"), intent)
+            return BotResponse(self._with_submenu_navigation("Boleh! 📊 Data apa yang mau dicari?"), intent)
         if intent == Intent.CONSULTATION:
             return BotResponse(
-                "Untuk rekomendasi dan konsultasi statistik, silakan isi buku tamu PST melalui tautan berikut:\n"
-                f"{CONSULTATION_LINK}\n\n"
-                "Kalau ingin dibantu petugas, ketik admin.\n\n"
+                "Untuk konsultasi statistik, silakan isi buku tamu PST di tautan berikut:\n"
+                f"🔗 {CONSULTATION_LINK}\n\n"
+                "Kalau mau langsung dibantu petugas, ketik *admin*.\n\n"
                 f"{self._submenu_navigation_text()}",
                 intent,
                 source_url=CONSULTATION_LINK,
@@ -180,35 +180,35 @@ class ConversationEngine:
         if intent == Intent.ADMIN:
             await self.admin_handoff.start(session)
             return BotResponse(
-                "Baik, saya hubungkan ke admin.\n\n"
-                "Untuk sementara, bot tidak akan membalas percakapan ini sampai admin selesai membantu.\n\n"
-                "Kalau ingin membatalkan, ketik batal atau menu.",
+                "Baik, saya sambungkan ke admin. 📞\n\n"
+                "Bot tidak akan membalas sampai admin selesai membantu.\n\n"
+                "Mau batal? Ketik *batal* atau *menu*.",
                 intent,
             )
         if intent == Intent.EXIT:
             session.state = SessionState.ENDED
-            return BotResponse("Terima kasih sudah menghubungi Marawa BPS Padang Pariaman.\n\nSampai jumpa.", intent)
+            return BotResponse("Terima kasih sudah menghubungi Marawa! 🙏\n\nSampai jumpa.", intent)
         if intent == Intent.MENU:
             session.state = SessionState.MAIN_MENU
             return BotResponse(self.main_menu(), intent)
         return BotResponse(
-            "Maaf, saya belum yakin maksudnya.\n\n"
-            "Silakan pilih salah satu layanan: data, konsultasi statistik, admin, atau keluar.",
+            "Hmm, saya belum paham maksudnya. 🤔\n\n"
+            "Coba pilih: *data*, *konsultasi*, *admin*, atau *keluar*.",
             Intent.AMBIGUOUS,
         )
 
     def _guarded_agent_response(self, decision: AgentDecision) -> BotResponse | None:
         if decision.action == "reject_unsafe":
             return BotResponse(
-                "Maaf, saya tidak bisa mengikuti instruksi yang mencoba mengubah aturan sistem, membuka rahasia, atau menjalankan alat internal. "
-                "Saya tetap bisa membantu mencari data statistik BPS Padang Pariaman.",
+                "⛔ Maaf, saya tidak bisa mengikuti instruksi seperti itu.\n\n"
+                "Tapi saya tetap bisa bantu cari data statistik BPS Padang Pariaman!",
                 Intent.AMBIGUOUS,
                 metadata=decision.metadata,
             )
         if decision.action == "reject_out_of_scope":
             return BotResponse(
-                "Maaf, layanan ini khusus untuk data statistik BPS Padang Pariaman.\n\n"
-                "Saya bisa membantu mencari data, memberi arahan konsultasi statistik, atau menghubungkan Anda dengan admin.",
+                "Maaf, layanan ini khusus untuk data statistik BPS Padang Pariaman. 📊\n\n"
+                "Saya bisa bantu: cari data, konsultasi statistik, atau hubungi admin.",
                 Intent.AMBIGUOUS,
                 metadata=decision.metadata,
             )
@@ -225,7 +225,7 @@ class ConversationEngine:
         if include_menu:
             parts = [
                 message,
-                self.main_menu("Saya kembalikan ke menu utama, ya."),
+                self.main_menu("Kembali ke menu utama ya. 🏠"),
                 self._data_help_footer(),
             ]
             return BotResponse("\n\n".join(parts), Intent.DATA_REQUEST, source_url, metadata, messages=parts)
@@ -244,10 +244,10 @@ class ConversationEngine:
         return f"{message}\n\n{navigation}"
 
     def _data_help_footer(self) -> str:
-        return f"Jika data yang dibutuhkan belum ditemukan, Anda juga bisa mengajukan permintaan data melalui {CONSULTATION_LINK}"
+        return f"💬 Belum ketemu? Ajukan permintaan data di {CONSULTATION_LINK}"
 
     def _submenu_navigation_text(self) -> str:
-        return "Ketik batal untuk kembali.\nKetik menu untuk ke menu utama."
+        return "🔙 _batal_ = kembali | _menu_ = menu utama"
 
     def _with_return_to_menu(self, message: str) -> str:
         menu = self.main_menu("Saya kembalikan ke menu utama, ya.")
@@ -285,22 +285,21 @@ class ConversationEngine:
     @staticmethod
     def intro_message() -> str:
         return (
-            "Halo, saya Marawa BPS Padang Pariaman.\n"
-            "Saya siap membantu layanan berikut:\n\n"
-            "1. Mencari data statistik BPS Kabupaten Padang Pariaman\n"
-            "2. Rekomendasi dan konsultasi statistik\n"
-            "3. Menghubungkan Anda dengan admin\n"
-            "4. Mengakhiri percakapan\n\n"
-            "Silakan ketik nomor menu atau tuliskan kebutuhan Anda."
+            "Halo! Saya *Marawa*, asisten data BPS Padang Pariaman. 👋\n\n"
+            "Saya bisa bantu:\n"
+            "1️⃣ Cari data statistik\n"
+            "2️⃣ Konsultasi statistik\n"
+            "3️⃣ Hubungi admin\n"
+            "4️⃣ Akhiri percakapan\n\n"
+            "Ketik angka atau langsung tulis kebutuhanmu, ya."
         )
 
     @classmethod
     def admin_finished_user_message(cls) -> str:
         return (
-            "Admin telah menyelesaikan sesi bantuan.\n\n"
-            "Bot Marawa sudah aktif kembali untuk percakapan ini.\n\n"
-            f"{cls.intro_message()}\n\n"
-            f"{cls.main_menu('Silakan pilih layanan yang dibutuhkan.')}"
+            "✅ Admin sudah selesai membantu.\n\n"
+            "Bot Marawa aktif kembali untuk percakapan ini.\n\n"
+            f"{cls.main_menu('Ada yang bisa saya bantu lagi?')}"
         )
 
     @staticmethod
@@ -318,7 +317,7 @@ class ConversationEngine:
         query = await self.ai_client.extract_data_query(text)
         if self._is_generic_data_request(query or text):
             session.state = SessionState.ASKING_DATA_QUERY
-            return BotResponse(self._with_submenu_navigation("Boleh. Data apa yang ingin dicari?"), Intent.DATA_REQUEST)
+            return BotResponse(self._with_submenu_navigation("Boleh! 📊 Data apa yang mau dicari?"), Intent.DATA_REQUEST)
         keyword_candidates = await self._data_keyword_candidates(text, query, keywords)
         result = await self.bps_client.search_variable_options(
             query,
@@ -329,13 +328,13 @@ class ConversationEngine:
             session.state = SessionState.ASKING_DATA_QUERY
             if self._has_source_error(result.metadata):
                 return self._data_response(
-                    f"{result.summary}\n\nSilakan coba lagi beberapa saat lagi, atau ketik menu untuk kembali ke menu utama.",
+                    f"{result.summary}\n\nCoba lagi beberapa saat lagi ya, atau ketik *menu* untuk kembali.",
                     source_url=CONSULTATION_LINK,
                     metadata=result.metadata or {},
                 )
             return self._data_response(
-                "Maaf, saya belum menemukan data yang sesuai.\n\n"
-                "Silakan tuliskan kata kunci yang lebih spesifik, atau ketik menu untuk kembali ke menu utama.",
+                "Maaf, belum ketemu nih. 😕\n\n"
+                "Coba tulis kata kunci yang lebih spesifik, atau ketik *menu* untuk kembali.",
                 source_url=CONSULTATION_LINK,
                 metadata=result.metadata or {},
             )
@@ -395,20 +394,20 @@ class ConversationEngine:
             )
         if self.bps_client.has_quarterly_periods(session.pending_bps_periods):
             return BotResponse(
-                f"Baik, saya pakai data berikut:\n\n{title}\n\n"
-                "Tahun dan triwulan berapa yang dibutuhkan?\n\n"
+                f"✅ Oke, saya pakai:\n\n*{title}*\n\n"
+                "Tahun dan triwulan berapa?\n\n"
                 "Contoh:\n"
-                "- 2024 triwulan 1\n"
-                "- 2024 TW 1-4\n"
-                "- 2023-2024 triwulan 4\n\n"
+                "• 2024 triwulan 1\n"
+                "• 2024 TW 1-4\n"
+                "• 2023-2024 triwulan 4\n\n"
                 f"{self._submenu_navigation_text()}",
                 Intent.DATA_REQUEST,
                 metadata={"selected_variable": selected, "periods": session.pending_bps_periods},
             )
         return self._data_response(
-            f"Baik, saya pakai data berikut:\n\n{title}\n\n"
+            f"✅ Oke, saya pakai:\n\n*{title}*\n\n"
             "Tahun berapa yang dibutuhkan?\n\n"
-            "Contoh: 2023 atau 2023-2025.\n\n"
+            "Contoh: 2023 atau 2023-2025\n\n"
             f"{self._submenu_navigation_text()}",
             metadata={"selected_variable": selected},
         )
@@ -423,8 +422,8 @@ class ConversationEngine:
         if not result.found:
             session.state = SessionState.CONFIRMING_DATA_VARIABLE
             return self._data_response(
-                "Maaf, detail publikasi yang dipilih belum bisa saya ambil.\n\n"
-                "Silakan pilih publikasi lain, tuliskan kata kunci yang lebih spesifik, atau ketik menu untuk kembali ke menu utama.",
+                "Maaf, detail publikasi ini belum bisa diambil. 😔\n\n"
+                "Pilih publikasi lain, tulis kata kunci baru, atau ketik *menu*.",
                 result.source_url,
                 result.metadata or {},
             )
@@ -438,22 +437,22 @@ class ConversationEngine:
         periods = parse_quarter_periods(text)
         if not years:
             return self._data_response(
-                "Mohon ketik tahun yang dibutuhkan.\n\n"
-                "Contoh: 2023 atau 2023-2025.\n\n"
+                "Tahun berapa nih? 📅\n\n"
+                "Contoh: 2023 atau 2023-2025\n\n"
                 f"{self._submenu_navigation_text()}"
             )
         if self.bps_client.has_quarterly_periods(session.pending_bps_periods) and not periods:
             session.pending_data_years = years
             return self._data_response(
                 "Data ini tersedia per triwulan.\n\n"
-                "Mohon ketik triwulan yang dibutuhkan.\n\n"
-                "Contoh: triwulan 1, TW 1-4, atau semua triwulan.\n\n"
+                "Triwulan berapa?\n\n"
+                "Contoh: triwulan 1, TW 1-4, atau semua triwulan\n\n"
                 f"{self._submenu_navigation_text()}"
             )
         if not session.selected_bps_variable:
             self._clear_data_context(session)
             session.state = SessionState.ASKING_DATA_QUERY
-            return self._data_response(self._with_submenu_navigation("Boleh. Data apa yang ingin dicari?"))
+            return self._data_response(self._with_submenu_navigation("Boleh! 📊 Data apa yang mau dicari?"))
         result = await self.bps_client.fetch_table_by_variable(
             session.pending_data_query or "",
             session.selected_bps_variable,
@@ -491,13 +490,11 @@ class ConversationEngine:
         if session.state == SessionState.ASKING_DATA_YEAR:
             return (
                 f"{message}\n\n"
-                "Silakan ketik tahun atau rentang tahun lain yang tersedia.\n"
-                "Ketik menu jika ingin kembali ke menu utama."
+                "Coba ketik tahun lain yang tersedia, atau *menu* untuk kembali."
             )
         return (
             f"{message}\n\n"
-            "Silakan tuliskan kata kunci data yang lain.\n"
-            "Ketik menu jika ingin kembali ke menu utama."
+            "Coba kata kunci lain, atau ketik *menu* untuk kembali."
         )
 
     def _has_source_error(self, metadata: dict | None) -> bool:
@@ -645,8 +642,8 @@ class ConversationEngine:
         source = self._requested_source(text) or self._next_available_source(session)
         if not source:
             return BotResponse(
-                "Pilihan berikutnya belum tersedia.\n\n"
-                "Silakan pilih nomor yang ada, atau tuliskan kata kunci yang lebih detail.\n\n"
+                "Sudah tidak ada pilihan lain. 😅\n\n"
+                "Pilih nomor yang ada, atau tulis kata kunci baru.\n\n"
                 f"{self._submenu_navigation_text()}",
                 Intent.DATA_REQUEST,
             )
@@ -658,8 +655,8 @@ class ConversationEngine:
         source = self._requested_source(text) or session.pending_bps_active_source
         if not source or session.pending_bps_source_pages.get(source, 0) <= 0:
             return BotResponse(
-                "Ini sudah halaman pertama.\n\n"
-                "Silakan pilih nomor yang ada, atau tuliskan kata kunci yang lebih detail.\n\n"
+                "Ini sudah halaman pertama. 😊\n\n"
+                "Pilih nomor yang ada, atau tulis kata kunci baru.\n\n"
                 f"{self._submenu_navigation_text()}",
                 Intent.DATA_REQUEST,
             )
@@ -724,12 +721,12 @@ class ConversationEngine:
         }
 
     @staticmethod
-    def main_menu(prefix: str = "Halo, saya Marawa BPS Padang Pariaman.") -> str:
+    def main_menu(prefix: str = "Halo! Saya Marawa, asisten data BPS Padang Pariaman. 👋") -> str:
         return (
             f"{prefix}\n\n"
-            "1. Mencari data statistik BPS Kabupaten Padang Pariaman\n"
-            "2. Rekomendasi dan konsultasi statistik\n"
-            "3. Menghubungkan Anda dengan admin\n"
-            "4. Mengakhiri percakapan\n\n"
-            "Silakan ketik nomor menu atau tuliskan kebutuhan Anda."
+            "1️⃣ Cari data statistik\n"
+            "2️⃣ Konsultasi statistik\n"
+            "3️⃣ Hubungi admin\n"
+            "4️⃣ Akhiri percakapan\n\n"
+            "Ketik angka atau langsung tulis kebutuhanmu."
         )

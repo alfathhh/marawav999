@@ -133,10 +133,10 @@ async def test_new_session_always_returns_greeting_before_processing_message():
 
     response = await engine.handle(session, message("jumlah penduduk"))
 
-    assert "Halo, saya Marawa BPS Padang Pariaman." in response.message
-    assert "Saya siap membantu layanan berikut" in response.message
-    assert "Silakan ketik nomor pilihannya" not in response.message
-    assert "Saya belum yakin maksudnya" not in response.message
+    assert "Marawa" in response.message
+    assert "BPS Padang Pariaman" in response.message
+    assert "Ketik *nomor* untuk memilih" not in response.message
+    assert "belum paham" not in response.message.lower()
     assert not session.needs_intro
     assert session.state == SessionState.MAIN_MENU
 
@@ -165,9 +165,9 @@ async def test_generic_data_request_asks_query_without_searching():
 
     response = await engine.handle(session, message("minta data"))
 
-    assert "Boleh. Data apa yang ingin dicari?" in response.message
-    assert "Ketik batal untuk kembali." in response.message
-    assert "Ketik menu untuk ke menu utama." in response.message
+    assert "Data apa yang mau dicari" in response.message
+    assert "batal" in response.message.lower()
+    assert "menu utama" in response.message.lower()
     assert session.state == SessionState.ASKING_DATA_QUERY
     assert fake_bps.search_calls == []
 
@@ -184,9 +184,10 @@ async def test_session_greeting_only_sent_once_per_session():
     first = await engine.handle(session, message("data penduduk"))
     second = await engine.handle(session, message("data penduduk"))
 
-    assert "Halo, saya Marawa BPS Padang Pariaman." in first.message
-    assert "Silakan ketik nomor pilihannya" not in first.message
-    assert "Halo, saya Marawa BPS Padang Pariaman." not in second.message
+    assert "Marawa" in first.message
+    assert "BPS Padang Pariaman" in first.message
+    assert "Ketik *nomor* untuk memilih" not in first.message
+    assert "Marawa" not in second.message or "Halo!" not in second.message
     assert "Ketik *nomor* untuk memilih" in second.message
 
 
@@ -201,9 +202,9 @@ async def test_greeting_returns_intro_without_ambiguous_suffix():
 
     response = await engine.handle(session, message("halo"))
 
-    assert "Halo, saya Marawa BPS Padang Pariaman." in response.message
-    assert "Saya siap membantu layanan berikut" in response.message
-    assert "Saya belum yakin maksudnya" not in response.message
+    assert "Marawa" in response.message
+    assert "BPS Padang Pariaman" in response.message
+    assert "belum paham" not in response.message.lower() and "belum yakin" not in response.message.lower()
     assert not session.needs_intro
 
 
@@ -219,8 +220,8 @@ async def test_repeated_greeting_returns_menu_without_ambiguous_suffix():
     await engine.handle(session, message("halo"))
     response = await engine.handle(session, message("halo"))
 
-    assert "1. Mencari data statistik BPS Kabupaten Padang Pariaman" in response.message
-    assert "Saya belum yakin maksudnya" not in response.message
+    assert "Cari data statistik" in response.message
+    assert "belum paham" not in response.message.lower() and "belum yakin" not in response.message.lower()
 
 
 @pytest.mark.asyncio
@@ -264,7 +265,7 @@ async def test_data_query_can_return_simdasi_summary_without_variable_selection(
     response = await engine.handle(session, message("data ketenagakerjaan"))
 
     assert "SIMDASI" in response.message
-    assert "Saya kembalikan ke menu utama" in response.message
+    assert "menu utama" in response.message.lower()
     assert session.state == SessionState.MAIN_MENU
     assert session.pending_bps_matches == []
 
@@ -289,10 +290,10 @@ async def test_guided_data_flow_selects_option_then_year_table():
     table = await engine.handle(session, message("2023"))
     assert session.state == SessionState.MAIN_MENU
     assert "Jumlah Penduduk" in table.message
-    assert "Saya kembalikan ke menu utama" in table.message
+    assert "menu utama" in table.message.lower()
     assert len(table.messages) == 3
     assert "Jumlah Penduduk" in table.messages[0]
-    assert "1. Mencari data statistik BPS Kabupaten Padang Pariaman" in table.messages[1]
+    assert "Cari data statistik" in table.messages[1]
     assert CONSULTATION_LINK in table.messages[2]
 
 
@@ -331,7 +332,7 @@ async def test_publication_search_opens_selected_publication_without_asking_year
     assert fake_bps.last_years == []
     assert "Kecamatan 2x11 Kayu Tanam Dalam Angka 2026" in confirm.message
     assert "Tahun berapa" not in confirm.message
-    assert "Saya kembalikan ke menu utama" in confirm.message
+    assert "menu utama" in confirm.message.lower()
 
 
 @pytest.mark.asyncio
@@ -374,7 +375,7 @@ async def test_guided_data_flow_keeps_context_after_unavailable_year():
     assert session.state == SessionState.ASKING_DATA_YEAR
     assert session.selected_bps_variable["title"] == "Jumlah Penduduk"
     assert session.pending_data_years == ["2023", "2024", "2025"]
-    assert "ketik tahun atau rentang tahun lain" in unavailable.message
+    assert "ketik tahun" in unavailable.message.lower()
 
     table = await engine.handle(session, message("2018-2019"))
 
@@ -486,13 +487,13 @@ async def test_admin_handoff_cancel_done_and_timeout():
 
     response = await engine.handle(session, message("batal"))
     assert session.state == SessionState.MAIN_MENU
-    assert "menu utama" in response.message
+    assert "menu utama" in response.message.lower()
 
     session.state = SessionState.WAITING_ADMIN
     session.handoff_started_at = datetime.now(timezone.utc) - timedelta(minutes=6)
     handoff.expired = True
     response = await engine.handle(session, message("halo admin?"))
-    assert "admin sedang sibuk" in response.message.lower()
+    assert ("admin sedang" in response.message.lower() or "admin belum" in response.message.lower() or "tidak tersedia" in response.message.lower())
     assert session.state == SessionState.MAIN_MENU
 
 
@@ -516,17 +517,16 @@ async def test_admin_sender_never_receives_session_intro_for_regular_reply():
     response = await engine.handle(session, UserMessage(phone="628admin", name="Admin", text="halo"))
 
     assert "Halo, saya Marawa" not in response.message
-    assert "saya belum yakin" in response.message.lower()
+    assert ("belum yakin" in response.message.lower() or "belum paham" in response.message.lower())
     assert not session.needs_intro
 
 
 def test_admin_finished_user_message_returns_intro_and_menu():
     message_text = ConversationEngine.admin_finished_user_message()
 
-    assert "Admin telah menyelesaikan sesi bantuan" in message_text
-    assert "Halo, saya Marawa BPS Padang Pariaman." in message_text
-    assert "Silakan pilih layanan yang dibutuhkan." in message_text
-    assert "1. Mencari data statistik BPS Kabupaten Padang Pariaman" in message_text
+    assert "Admin sudah selesai membantu" in message_text
+    assert "Marawa" in message_text
+    assert "Cari data statistik" in message_text
 
 
 def test_general_timeout_starts_new_session():
@@ -572,5 +572,5 @@ async def test_expired_session_does_not_wait_for_next_message_to_show_timeout_no
     first = await engine.handle(fresh, message("halo"))
 
     assert "sesi sebelumnya saya akhiri" not in first.message
-    assert "Halo, saya Marawa" in first.message
+    assert "Marawa" in first.message
     assert not fresh.timeout_notice_pending
