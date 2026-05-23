@@ -462,6 +462,118 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
+## BPS Proxy (Home Server)
+
+BPS WebAPI (`webapi.bps.go.id`) memblokir request dari IP cloud/VPS. Hanya IP residential/kantor Indonesia yang bisa mengaksesnya. Solusinya: jalankan reverse proxy di home server, lalu expose via tunnel.
+
+**Arsitektur:**
+
+```
+User → WA → GOWA → Bot (cloud) → Tunnel → Home Server Proxy → webapi.bps.go.id
+                                                    ↓
+User ← WA ← GOWA ← Bot (cloud) ← Tunnel ← Home Server Proxy ← response
+```
+
+### Setup Proxy di Home Server
+
+1. Copy folder `proxy/` ke home server:
+
+```bash
+scp -r proxy/ user@home-server:~/bps-proxy/
+```
+
+2. Build dan jalankan:
+
+```bash
+cd ~/bps-proxy
+docker compose up -d --build
+```
+
+3. Test dari home server:
+
+```bash
+curl "http://localhost:8001/v1/api/list/model/var/lang/ind/domain/1306/page/1/key/API_KEY_ANDA"
+```
+
+Kalau dapat JSON → proxy works.
+
+### Setup Tunnel
+
+Pilih salah satu: **Cloudflare Tunnel**, **Tailscale**, atau **ZeroTier**.
+
+#### Opsi A: Cloudflare Tunnel (recommended)
+
+```bash
+# Install cloudflared
+curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+sudo dpkg -i cloudflared.deb
+
+# Login dan buat tunnel
+cloudflared tunnel login
+cloudflared tunnel create bps-proxy
+
+# Buat config ~/.cloudflared/config.yml:
+# tunnel: bps-proxy
+# credentials-file: /root/.cloudflared/<TUNNEL_ID>.json
+# ingress:
+#   - hostname: bps-proxy.yourdomain.com
+#     service: http://localhost:8001
+#   - service: http_status:404
+
+# Route DNS
+cloudflared tunnel route dns bps-proxy bps-proxy.yourdomain.com
+
+# Jalankan sebagai service
+sudo cloudflared service install
+sudo systemctl start cloudflared
+```
+
+#### Opsi B: Tailscale
+
+```bash
+# Install tailscale di home server dan cloud server
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+
+# Gunakan IP Tailscale home server sebagai BPS_BASE_URL
+# Contoh: BPS_BASE_URL=http://100.x.x.x:8001/v1/api
+```
+
+#### Opsi C: ZeroTier
+
+```bash
+# Install zerotier di kedua server
+curl -s https://install.zerotier.com | sudo bash
+sudo zerotier-cli join <NETWORK_ID>
+
+# Gunakan IP ZeroTier home server sebagai BPS_BASE_URL
+# Contoh: BPS_BASE_URL=http://10.x.x.x:8001/v1/api
+```
+
+### Konfigurasi Bot
+
+Setelah tunnel aktif, update `.env` di bot:
+
+```env
+BPS_BASE_URL=https://bps-proxy.yourdomain.com/v1/api
+```
+
+Restart bot:
+
+```bash
+docker compose up -d --force-recreate marawa-bot
+```
+
+### Verifikasi
+
+```bash
+# Cek health proxy via tunnel
+curl https://bps-proxy.yourdomain.com/health
+
+# Cek bot bisa akses BPS via proxy
+docker compose logs -f marawa-bot | grep "bps.request"
+```
+
 ## Referensi
 
 - [GOWA GitHub](https://github.com/aldinokemal/go-whatsapp-web-multidevice)

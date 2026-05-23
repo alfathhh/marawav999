@@ -43,6 +43,7 @@ async def lifespan(app: FastAPI):
         BpsClient(
             settings.bps_api_key,
             settings.bps_domain,
+            base_url=settings.bps_base_url,
             cache_ttl_seconds=settings.bps_cache_ttl_seconds,
             cache_db_path=settings.bps_cache_db_path,
         ),
