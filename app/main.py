@@ -133,6 +133,33 @@ async def gowa_webhook(
     response = await request.app.state.engine.handle(session, message)
     request.app.state.sessions.update(session)
 
+    if response.metadata.get("admin_pickup_for"):
+        target_phone = response.metadata["admin_pickup_for"]
+        target_session = request.app.state.sessions.get(target_phone)
+        target_session.state = SessionState.TALKING_TO_ADMIN
+        target_session.needs_intro = False
+        request.app.state.sessions.update(target_session)
+        pickup_message = request.app.state.engine.admin_pickup_user_message()
+        send_started = time.perf_counter()
+        await request.app.state.gowa.send_text(target_phone, pickup_message)
+        logging.getLogger(__name__).info("webhook.timing phone=%s send_ms=%.1f kind=admin_pickup_user", target_phone, _elapsed_ms(send_started))
+        _remember_bot_message(request.app.state.recent_bot_messages, target_phone, pickup_message)
+        _schedule_sheets_task(
+            request.app.state.sheets.log_conversation(
+                phone=target_phone,
+                name=target_session.name,
+                direction="out",
+                state=target_session.state.value,
+                intent=response.intent.value if response.intent else "",
+                message="",
+                bot_response=pickup_message,
+                metadata={"admin_pickup_by": message.phone},
+                source_url=None,
+            ),
+            "admin_pickup_conversation",
+            target_phone,
+        )
+
     if response.metadata.get("admin_done_for"):
         target_phone = response.metadata["admin_done_for"]
         target_session = request.app.state.sessions.activate(target_phone)
@@ -417,6 +444,41 @@ async def _send_expired_session_timeout_notices(app: FastAPI, phone: str | None 
                 source_url=None,
             ),
             "admin_handoff_timeout",
+            session.phone,
+        )
+    # Handle TALKING_TO_ADMIN sessions where user has been idle
+    for session in app.state.sessions.expired_admin_talk_sessions():
+        if phone and session.phone != phone:
+            continue
+        admin_talk_timeout_notice = (
+            "Percakapan dengan admin diakhiri karena tidak ada balasan selama beberapa waktu.\n\n"
+            "Terima kasih sudah menghubungi Marawa BPS Padang Pariaman.\n\n"
+            "Sampai jumpa."
+        )
+        try:
+            await app.state.gowa.send_text(session.phone, admin_talk_timeout_notice)
+        except Exception:
+            logging.getLogger(__name__).exception("admin_talk_timeout.send_failed phone=%s", session.phone)
+            continue
+        logging.getLogger(__name__).info("admin_talk_timeout.sent phone=%s", session.phone)
+        session.state = SessionState.ENDED
+        session.handoff_started_at = None
+        session.needs_intro = True
+        app.state.sessions.update(session)
+        _remember_bot_message(app.state.recent_bot_messages, session.phone, admin_talk_timeout_notice)
+        _schedule_sheets_task(
+            app.state.sheets.log_conversation(
+                phone=session.phone,
+                name=session.name,
+                direction="out",
+                state=session.state.value,
+                intent="admin_talk_timeout",
+                message="",
+                bot_response=admin_talk_timeout_notice,
+                metadata={"admin_talk_timeout": True, "proactive": True},
+                source_url=None,
+            ),
+            "admin_talk_timeout",
             session.phone,
         )
 

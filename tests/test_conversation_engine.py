@@ -94,11 +94,22 @@ class FakeHandoff:
         return self.expired
 
     def is_admin_command(self, text, sender):
-        return sender in {"628admin"} and text.startswith("selesai")
+        if sender not in {"628admin"}:
+            return False
+        keyword = text.strip().lower().split(maxsplit=1)[0:1]
+        return keyword == ["selesai"] or keyword == ["ambil"]
 
-    def parse_finished_user(self, text):
+    def is_pickup_command(self, text, sender):
+        if sender not in {"628admin"}:
+            return False
+        return text.strip().lower().split(maxsplit=1)[0:1] == ["ambil"]
+
+    def parse_target_user(self, text):
         parts = text.split(maxsplit=1)
         return parts[1] if len(parts) == 2 else ""
+
+    def parse_finished_user(self, text):
+        return self.parse_target_user(text)
 
 
 def message(text="halo"):
