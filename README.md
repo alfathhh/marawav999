@@ -55,6 +55,42 @@ docker compose up -d --force-recreate gowa
 
 > **Note:** Submodule `./gowa` tidak perlu di-clone kalau pakai Opsi B.
 
+## Instalasi Dari Nol (dengan Build GOWA dari Fork)
+
+Kalau lo clone repo ini dan mau jalankan dengan GOWA build dari fork (Opsi A di atas):
+
+```bash
+# 1. Clone repo beserta submodule GOWA
+git clone --recurse-submodules https://github.com/alfathhh/marawav999.git
+cd marawav999
+
+# Atau kalau sudah clone tanpa submodule:
+git submodule update --init --recursive
+```
+
+```bash
+# 2. Salin konfigurasi
+cp .env.example .env
+# Edit .env sesuai kebutuhan
+```
+
+```bash
+# 3. Build dan jalankan semua service
+docker compose up -d --build
+```
+
+> **Catatan:** Build GOWA pertama kali akan lebih lama (~2-5 menit) karena perlu compile Go dari source.
+
+Untuk update GOWA ke commit terbaru fork:
+
+```bash
+git submodule update --remote gowa
+git add gowa && git commit -m "chore: update gowa"
+docker compose up -d --build gowa
+```
+
+---
+
 ## Deployment & Update
 
 Setelah ada perubahan kode (merge PR / pull dari GitHub):
